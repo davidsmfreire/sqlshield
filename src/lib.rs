@@ -7,7 +7,7 @@ use regex::Regex;
 use sqlparser::ast::{SetExpr, Statement};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser as SqlParser;
-use tree_sitter::Parser as CodeParser;
+use tree_sitter::{Node, Parser as CodeParser};
 use walkdir::WalkDir;
 
 struct SqlQueryError {
@@ -123,6 +123,51 @@ fn validate_query_with_schema(query: &Vec<Statement>, schema: &TablesAndColumns)
     return errors;
 }
 
+fn find_queries_in_tree(node: &Node, code: &[u8], queries: &mut Vec<QueryInCode>) {
+    let mut cursor = node.walk();
+    let dialect = GenericDialect {};
+
+    for child in node.children(&mut cursor) {
+        let mut child_cursor = child.walk();
+        for component in child.children(&mut child_cursor) {
+            if component.kind() != "assignment" {
+                continue;
+            }
+
+            if component.child_count() > 3 {
+                continue;
+            }
+
+            let identifier = component.child(0).unwrap();
+            let equal = component.child(1).unwrap();
+            let var = component.child(2).unwrap();
+
+            let is_string_assignment =
+                identifier.kind() == "identifier" && equal.kind() == "=" && var.kind() == "string";
+
+            if !is_string_assignment {
+                continue;
+            }
+
+            let content = var.child(1).unwrap();
+            let content_as_string =
+                String::from_utf8_lossy(&code[content.start_byte()..content.end_byte()]);
+
+            let point = component.start_position();
+
+            let statements = SqlParser::parse_sql(&dialect, &content_as_string);
+
+            if let Ok(statements) = statements {
+                queries.push(QueryInCode {
+                    line: point.row + 1,
+                    statements,
+                })
+            }
+        }
+        find_queries_in_tree(&child, code, queries);
+    }
+}
+
 fn find_queries(code: &[u8]) -> Vec<QueryInCode> {
     let mut parser = CodeParser::new();
     parser
@@ -130,49 +175,9 @@ fn find_queries(code: &[u8]) -> Vec<QueryInCode> {
         .expect("Error loading Python grammar");
     let parsed = parser.parse(code, None);
     let mut queries: Vec<QueryInCode> = Vec::new();
-    let dialect = GenericDialect {};
 
     if let Some(tree) = parsed {
-        let mut cursor = tree.walk();
-        for node in tree.root_node().children(&mut cursor) {
-            let mut node_cursor = node.walk();
-            for component in node.children(&mut node_cursor) {
-                if component.kind() != "assignment" {
-                    continue;
-                }
-
-                if component.child_count() > 3 {
-                    continue;
-                }
-
-                let identifier = component.child(0).unwrap();
-                let equal = component.child(1).unwrap();
-                let var = component.child(2).unwrap();
-
-                let is_string_assignment = identifier.kind() == "identifier"
-                    && equal.kind() == "="
-                    && var.kind() == "string";
-
-                if !is_string_assignment {
-                    continue;
-                }
-
-                let content = var.child(1).unwrap();
-                let content_as_string =
-                    String::from_utf8_lossy(&code[content.start_byte()..content.end_byte()]);
-
-                let point = component.start_position();
-
-                let statements = SqlParser::parse_sql(&dialect, &content_as_string);
-
-                if let Ok(statements) = statements {
-                    queries.push(QueryInCode {
-                        line: point.row + 1,
-                        statements,
-                    })
-                }
-            }
-        }
+        find_queries_in_tree(&tree.root_node(), &code, &mut queries);
     }
     return queries;
 }

@@ -18,6 +18,14 @@ fn test_sqlshield_acceptance() {
             location: "./tests/main.py:13".to_string(),
             description: "Table `admin` not found in schema".to_string(),
         },
+        SqlValidationError {
+            location: "./tests/main.py:21".to_string(),
+            description: "Table `admin` not found in schema".to_string(),
+        },
+        SqlValidationError {
+            location: "./tests/main.py:28".to_string(),
+            description: "Table `admin` not found in schema".to_string(),
+        },
     ];
     assert_eq!(validation_errors, expected_validation_errors);
 }
