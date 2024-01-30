@@ -30,3 +30,50 @@ def fn():
         FROM admin
         WHERE id = 1
     """
+
+
+valid_query_with_alias_and_join = """
+    SELECT u.name, r.content
+    FROM users u
+    JOIN receipt r
+    ON r.user_id = u.id
+    WHERE r.id = 1
+"""
+
+invalid_query_with_alias_and_join = """
+    SELECT r.name, u.content
+    FROM users u
+    JOIN receipt r
+    ON r.user_id = u.id
+    WHERE r.id = 1
+"""
+
+valid_query_with_derived = """
+    WITH sub as (
+        SELECT user_id, content FROM receipt
+    )
+    SELECT u.id, k.content
+    FROM users u
+    JOIN sub k
+    ON k.user_id = u.id
+"""
+
+invalid_query_with_derived_no_table = """
+    WITH sub as (
+        SELECT user_id, content FROM admin
+    )
+    SELECT k.user_id, u.id
+    FROM users u
+    JOIN sub k
+    ON k.user_id = u.id
+"""
+
+invalid_query_with_derived_wrong_columns = """
+    WITH sub as (
+        SELECT user_id, content FROM receipt
+    )
+    SELECT k.id, u.content
+    FROM users u
+    JOIN sub k
+    ON k.user_id = u.id
+"""
