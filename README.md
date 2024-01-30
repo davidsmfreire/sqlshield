@@ -20,6 +20,24 @@ Options:
           Print version
 ```
 
+## Features
+
+The tool validates the following main clauses:
+
+- SELECT :heavy_check_mark:
+  - WITH :heavy_check_mark:
+  - JOIN :heavy_check_mark:
+- INSERT :x:
+- UPDATE :x:
+- DELETE :x:
+
+Other clauses:
+
+- WHERE :x:
+- ORDER BY :x:
+- GROUP BY :x:
+- HAVING :x:
+
 ## Similar work
 
 - <https://github.com/andywer/postguard>
