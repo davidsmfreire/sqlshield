@@ -1,5 +1,5 @@
 extern crate sqlshield;
-use sqlshield::SqlValidationError;
+use sqlshield::validation::SqlValidationError;
 use std::path::PathBuf;
 
 #[test]
@@ -40,7 +40,7 @@ fn test_sqlshield_acceptance() {
         },
         SqlValidationError {
             location: "./tests/main.py:71".to_string(),
-            description: "Column `id` not found in table `users`".to_string(),
+            description: "Column `id` not found in table `sub`".to_string(),
         },
         SqlValidationError {
             location: "./tests/main.py:71".to_string(),
