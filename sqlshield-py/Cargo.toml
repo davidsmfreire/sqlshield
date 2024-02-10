@@ -1,0 +1,20 @@
+[package]
+name = "sqlshield-py"
+version = "0.0.1"
+edition = "2021"
+authors = ["David Freire"]
+description = "Python bindings for sqlshield with cli included"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "sqlshield"
+crate-type = ["cdylib"]
+
+# [[bin]]
+# name = "sqlshield"
+# path = "../sqlshield-cli/src/main.rs"
+
+
+[dependencies]
+pyo3 = "0.19.0"
+sqlshield = { workspace = true }

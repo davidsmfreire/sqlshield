@@ -1,17 +1,15 @@
-[package]
-name = "sqlshield"
-version = "0.1.0"
+[workspace]
+resolver = "2"
+members = [
+  "sqlshield",
+  "sqlshield-cli",
+  "sqlshield-py",
+]
+
+[workspace.package]
+version = "0.0.1"
+authors = ["David Freire <davidsmfreire@gmail.com>"]
 edition = "2021"
-authors = ["David Freire"]
-description = "Validate raw sql queries inside code files against a schema"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-clap = { version = "4.4.18", features = ["derive"] }
-colored = "2.1.0"
-regex = "1.10.3"
-sqlparser = "0.43.1"
-tree-sitter = "0.20.10"
-tree-sitter-python = "0.20.4"
-walkdir = "2.4.0"
+[workspace.dependencies]
+sqlshield = { version = "0.0.1", path = "sqlshield"}

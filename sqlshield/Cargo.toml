@@ -1,0 +1,16 @@
+[package]
+name = "sqlshield"
+version = "0.0.1"
+edition = "2021"
+authors = ["David Freire"]
+description = "Tools to validate raw sql queries declared in variables of arbitrary source code"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+colored = "2.1.0"
+regex = "1.10.3"
+sqlparser = "0.43.1"
+tree-sitter = "0.20.10"
+tree-sitter-python = "0.20.4"
+walkdir = "2.4.0"

@@ -20,6 +20,20 @@ Options:
           Print version
 ```
 
+## Installation
+
+- Pip:
+
+```shell
+pip install sqlshield
+```
+
+- Cargo
+
+```shell
+cargo install sqlshield-cli
+```
+
 ## Features
 
 The tool validates the following main clauses:

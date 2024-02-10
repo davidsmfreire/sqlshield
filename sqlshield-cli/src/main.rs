@@ -1,4 +1,4 @@
-extern crate sqlshield;
+use sqlshield;
 
 use clap::Parser;
 
