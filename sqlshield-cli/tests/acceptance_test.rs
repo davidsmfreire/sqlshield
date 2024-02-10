@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[test]
 fn test_sqlshield_acceptance() {
-    let validation_errors = sqlshield::validate(
+    let validation_errors = sqlshield::validate_files(
         &PathBuf::from("./tests/main.py"),
         &PathBuf::from("./tests/schema.sql"),
     );

@@ -27,19 +27,25 @@ impl PySqlValidationError {
 }
 
 #[pyfunction]
-fn validate(dir: String, schema_file_path: String) -> PyResult<Vec<PySqlValidationError>> {
+fn validate_files(dir: String, schema_file_path: String) -> PyResult<Vec<PySqlValidationError>> {
     Ok(
-        sqlshield_rs::validate(&PathBuf::from(dir), &PathBuf::from(schema_file_path))
+        sqlshield_rs::validate_files(&PathBuf::from(dir), &PathBuf::from(schema_file_path))
             .into_iter()
             .map(|err| PySqlValidationError(err))
             .collect::<Vec<PySqlValidationError>>(),
     )
 }
 
+#[pyfunction]
+fn validate_query(query: String, schema: String) -> PyResult<Vec<String>> {
+    Ok(sqlshield_rs::validate_query(query, schema))
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn sqlshield(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySqlValidationError>().unwrap();
-    m.add_function(wrap_pyfunction!(validate, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_files, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_query, m)?)?;
     Ok(())
 }

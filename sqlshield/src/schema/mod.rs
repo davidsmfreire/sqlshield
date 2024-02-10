@@ -8,7 +8,7 @@ use std::{
 
 pub type TablesAndColumns = HashMap<String, HashSet<String>>;
 
-pub fn load_schema(file_path: &Path) -> Result<TablesAndColumns, String> {
+pub fn load_schema_from_file(file_path: &Path) -> Result<TablesAndColumns, String> {
     let schema = fs::read(file_path);
     let file_extension = &file_path.extension().unwrap().to_string_lossy();
 
@@ -21,5 +21,22 @@ pub fn load_schema(file_path: &Path) -> Result<TablesAndColumns, String> {
             "Could not open {:?} due to error: {err}",
             file_path
         )),
+    }
+}
+
+trait LoadSchema {
+    fn to_schema(&self, schema_type: &str) -> Result<TablesAndColumns, String>;
+}
+
+impl LoadSchema for String {
+    fn to_schema(&self, schema_type: &str) -> Result<TablesAndColumns, String> {
+        load_schema(&self.as_bytes(), schema_type)
+    }
+}
+
+pub fn load_schema(schema: &[u8], schema_type: &str) -> Result<TablesAndColumns, String> {
+    match schema_type.as_ref() {
+        "sql" => sql::load_schema(&schema),
+        _ => Err(format!("Schema type not supported {schema_type}")),
     }
 }

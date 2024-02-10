@@ -7,6 +7,11 @@ class PySqlValidationError:
 
     description: str
     """error description"""
-    
-def validate(dir: str, schema_file_path: str) -> List[PySqlValidationError]:
+
+
+def validate_files(dir: str, schema_file_path: str) -> List[PySqlValidationError]:
+    ...
+
+
+def validate_query(query: str, schema: str) -> List[str]:
     ...

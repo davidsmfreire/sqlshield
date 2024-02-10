@@ -17,7 +17,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let validation_errors = sqlshield::validate(
+    let validation_errors = sqlshield::validate_files(
         &args.directory.unwrap_or(std::path::PathBuf::from(".")),
         &args
             .schema

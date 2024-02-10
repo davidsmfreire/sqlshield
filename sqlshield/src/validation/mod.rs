@@ -48,7 +48,7 @@ pub struct SqlQueryError {
     pub description: String,
 }
 
-pub fn validate_queries(
+pub fn validate_queries_in_code(
     queries: &Vec<finder::QueryInCode>,
     schema: &schema::TablesAndColumns,
 ) -> Vec<SqlQueryError> {
