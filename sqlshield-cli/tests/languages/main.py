@@ -28,7 +28,7 @@ def fn():
     invalid_query_missing_table_in_fn = """
         SELECT name
         FROM admin
-        WHERE id = 1
+        WHERE id = {something}
     """
 
 
@@ -40,12 +40,12 @@ valid_query_with_alias_and_join = """
     WHERE r.id = 1
 """
 
-invalid_query_with_alias_and_join = """
+invalid_query_with_alias_and_join = f"""
     SELECT r.name, u.content
     FROM users u
     JOIN receipt r
     ON r.user_id = u.id
-    WHERE r.id = 1
+    WHERE r.id = {1}
 """
 
 valid_query_with_derived = """
