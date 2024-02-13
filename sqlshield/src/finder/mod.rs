@@ -1,5 +1,6 @@
 mod python;
 mod rust;
+mod javascript;
 
 use std::{fs, path::Path};
 
@@ -10,7 +11,7 @@ pub struct QueryInCode {
     pub statements: Vec<sqlparser::ast::Statement>,
 }
 
-pub const SUPPORTED_CODE_FILE_EXTENSIONS: [&str; 2] = ["py", "rs"];
+pub const SUPPORTED_CODE_FILE_EXTENSIONS: [&str; 3] = ["py", "rs", "js"];
 
 pub fn find_queries_in_file(file_path: &Path) -> Result<Vec<super::QueryInCode>, String> {
     let code = fs::read(file_path);
@@ -37,6 +38,7 @@ pub fn find_queries_in_code(
                 python::extract_query_from_node,
             ),
             "rs" => (tree_sitter_rust::language(), rust::extract_query_from_node),
+            "js" => (tree_sitter_javascript::language(), javascript::extract_query_from_node),
             _ => panic!("{}", format!("File not supported {file_extension}")),
         };
 
