@@ -1,10 +1,9 @@
-
 // string ""
 // template_string ``
 // string_fragment (characters)
 // TODO template_substitution ${id}
 
-pub fn extract_query_from_node(node: &tree_sitter::Node, code: &[u8]) -> Option<String> {
+pub fn extract_query_string_from_node(node: &tree_sitter::Node, code: &[u8]) -> Option<String> {
     if node.kind() != "string" && node.kind() != "template_string" {
         return None;
     }
