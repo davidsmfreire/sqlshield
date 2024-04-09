@@ -34,9 +34,12 @@ pub fn find_queries_in_code(
         match file_extension.as_ref() {
             "py" => (
                 tree_sitter_python::language(),
-                python::extract_query_from_node,
+                python::extract_query_string_from_node,
             ),
-            "rs" => (tree_sitter_rust::language(), rust::extract_query_from_node),
+            "rs" => (
+                tree_sitter_rust::language(),
+                rust::extract_query_string_from_node,
+            ),
             _ => panic!("{}", format!("File not supported {file_extension}")),
         };
 
@@ -78,39 +81,33 @@ fn find_queries_in_ast(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        let mut child_cursor = child.walk();
+        match query_extractor(&child, code) {
+            Some(string_content) => {
+                // ! Duct tape
+                if string_content.find("REPLACE").is_some() {
+                    find_queries_in_ast(&child, code, query_extractor, dialect, queries, None)
+                }
+                // !
 
-        for component in child.children(&mut child_cursor) {
-            match query_extractor(&component, code) {
-                Some(string_content) => {
-                    // ! Duct tape
-                    if string_content.find("REPLACE").is_some() {
-                        continue;
+                let query_at = child.start_position();
+
+                let statements = sqlparser::parser::Parser::parse_sql(dialect, &string_content);
+
+                match statements {
+                    Ok(statements) => {
+                        queries.push(super::QueryInCode {
+                            line: query_at.row + 1,
+                            statements,
+                        });
                     }
-                    // !
-
-                    let query_at = component.start_position();
-
-                    let statements = sqlparser::parser::Parser::parse_sql(dialect, &string_content);
-
-                    match statements {
-                        Ok(statements) => {
-                            queries.push(super::QueryInCode {
-                                line: query_at.row + 1,
-                                statements,
-                            });
-                        }
-                        Err(err) => {
-                            if verbose.unwrap_or(0) > 0 {
-                                eprintln!("{err} {string_content}");
-                            }
+                    Err(err) => {
+                        if verbose.unwrap_or(0) > 0 {
+                            eprintln!("{err} {string_content}");
                         }
                     }
                 }
-                None => continue,
             }
+            None => find_queries_in_ast(&child, code, query_extractor, dialect, queries, None),
         }
-
-        find_queries_in_ast(&child, code, query_extractor, dialect, queries, None);
     }
 }

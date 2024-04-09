@@ -1,6 +1,6 @@
 use regex::Regex;
 
-pub fn extract_query_from_node(node: &tree_sitter::Node, code: &[u8]) -> Option<String> {
+pub fn extract_query_string_from_node(node: &tree_sitter::Node, code: &[u8]) -> Option<String> {
     if node.kind() != "string_literal" {
         return None;
     }
