@@ -34,9 +34,12 @@ pub fn find_queries_in_code(
         match file_extension.as_ref() {
             "py" => (
                 tree_sitter_python::language(),
-                python::extract_query_from_node,
+                python::extract_query_string_from_node,
             ),
-            "rs" => (tree_sitter_rust::language(), rust::extract_query_from_node),
+            "rs" => (
+                tree_sitter_rust::language(),
+                rust::extract_query_string_from_node,
+            ),
             _ => panic!("{}", format!("File not supported {file_extension}")),
         };
 
