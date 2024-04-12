@@ -1,4 +1,4 @@
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 extern crate sqlshield as sqlshield_rs;
 
@@ -38,7 +38,7 @@ fn validate_files(dir: String, schema_file_path: String) -> PyResult<Vec<PySqlVa
 
 #[pyfunction]
 fn validate_query(query: String, schema: String) -> PyResult<Vec<String>> {
-    Ok(sqlshield_rs::validate_query(query, schema))
+    sqlshield_rs::validate_query(query, schema).map_err(|err| PyValueError::new_err(err))
 }
 
 /// A Python module implemented in Rust.

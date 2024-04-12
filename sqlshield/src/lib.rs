@@ -9,14 +9,20 @@ use regex::Regex;
 use validation::{validate_queries_in_code, validate_statements_with_schema, SqlValidationError};
 use walkdir::WalkDir;
 
-pub fn validate_query(query: String, schema: String) -> Vec<String> {
+pub fn validate_query(query: String, schema: String) -> Result<Vec<String>, String> {
     let dialect = sqlparser::dialect::GenericDialect {};
 
-    let statements = sqlparser::parser::Parser::parse_sql(&dialect, &query).unwrap();
+    let statements = match sqlparser::parser::Parser::parse_sql(&dialect, &query) {
+        Ok(statements) => statements,
+        Err(err) => return Err(err.to_string()),
+    };
 
-    let loaded_schema = schema::load_schema(&schema.into_bytes(), "sql").unwrap();
+    let loaded_schema = match schema::load_schema(&schema.into_bytes(), "sql") {
+        Ok(loaded_schema) => loaded_schema,
+        Err(err) => return Err(err),
+    };
 
-    validate_statements_with_schema(&statements, &loaded_schema)
+    Ok(validate_statements_with_schema(&statements, &loaded_schema))
 }
 
 pub fn validate_files(dir: &PathBuf, schema_file_path: &PathBuf) -> Vec<SqlValidationError> {

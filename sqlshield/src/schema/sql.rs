@@ -5,8 +5,10 @@ pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns, String> {
     let schema_str = String::from_utf8_lossy(schema);
 
     let dialect = GenericDialect {};
-    let statements =
-        Parser::parse_sql(&dialect, schema_str.as_ref()).expect("Could not parse schema file");
+    let statements = match Parser::parse_sql(&dialect, schema_str.as_ref()) {
+        Ok(statements) => statements,
+        Err(err) => return Err(format!("Could not parse schema file: {err}")),
+    };
 
     let mut tables: HashMap<String, HashSet<String>> = HashMap::new();
     for statement in statements {
