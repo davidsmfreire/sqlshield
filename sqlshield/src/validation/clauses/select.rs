@@ -35,6 +35,20 @@ impl<'a> VisibleRelation<'a> {
     }
 }
 
+pub(crate) fn validate_exprs_in_select_scope(
+    exprs: &[&Expr],
+    select: &Select,
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&str, HashSet<&str>>,
+) -> Vec<String> {
+    let visible = collect_visible_relations(&select.from);
+    let mut errors = Vec::new();
+    for expr in exprs {
+        validate_expr_column_refs(expr, &visible, schema, extras, &mut errors);
+    }
+    errors
+}
+
 fn collect_visible_relations<'a>(tables: &'a [TableWithJoins]) -> Vec<VisibleRelation<'a>> {
     let mut out = Vec::new();
     for t in tables {

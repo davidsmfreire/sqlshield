@@ -2,7 +2,7 @@
 //! next) implements [`ClauseValidation`] to check its references against the
 //! schema plus any CTE-derived visible relations.
 
-mod select;
+pub(crate) mod select;
 
 use std::collections::{HashMap, HashSet};
 

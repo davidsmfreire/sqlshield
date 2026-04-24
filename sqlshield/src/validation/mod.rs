@@ -92,7 +92,20 @@ pub fn validate_query_with_schema<'a>(
     validate_and_extract_subqueries(query, schema, &mut extras, &mut errors);
 
     if let SetExpr::Select(boxed) = query.body.as_ref() {
-        errors.append(&mut boxed.as_ref().validate(schema, &extras));
+        let select = boxed.as_ref();
+        errors.append(&mut select.validate(schema, &extras));
+
+        // ORDER BY lives on Query and resolves against the Select's scope.
+        if !query.order_by.is_empty() {
+            let order_exprs: Vec<&sqlparser::ast::Expr> =
+                query.order_by.iter().map(|ob| &ob.expr).collect();
+            errors.extend(clauses::select::validate_exprs_in_select_scope(
+                &order_exprs,
+                select,
+                schema,
+                &extras,
+            ));
+        }
     }
     // TODO: inserts, updates, ...
 
