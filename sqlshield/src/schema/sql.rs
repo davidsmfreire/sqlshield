@@ -12,13 +12,25 @@ pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns> {
     let mut tables: HashMap<String, HashSet<String>> = HashMap::new();
     for statement in statements {
         if let Statement::CreateTable { columns, name, .. } = statement {
-            // Only the table name is retained; schema/database qualifiers are discarded.
             let Some(last_ident) = name.0.last() else {
                 continue;
             };
             let columns_set: HashSet<String> =
                 HashSet::from_iter(columns.iter().map(|e| e.name.value.clone()));
-            tables.insert(last_ident.value.clone(), columns_set);
+
+            // Store the bare table name so unqualified queries resolve; if the
+            // schema was declared as `schema.table`, ALSO store the fully
+            // qualified form so qualified queries can be resolved strictly.
+            tables.insert(last_ident.value.clone(), columns_set.clone());
+            if name.0.len() > 1 {
+                let full = name
+                    .0
+                    .iter()
+                    .map(|p| p.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                tables.insert(full, columns_set);
+            }
         }
     }
     Ok(tables)
