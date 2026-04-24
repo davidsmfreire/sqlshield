@@ -250,6 +250,19 @@ fn is_select_item_in_relations<'a>(
     Some((item_name?, tables_searched_where_not_found))
 }
 
+/// Pull a direct column reference out of an expression, ignoring wrappers
+/// we don't yet drill into (function calls, CASE, casts, etc.).
+fn direct_col_ref(expr: &Expr) -> (Option<&str>, Option<&str>) {
+    match expr {
+        Expr::Identifier(identifier) => (Some(identifier.value.as_str()), None),
+        Expr::CompoundIdentifier(identifier) if identifier.len() == 2 => (
+            Some(identifier[1].value.as_str()),
+            Some(identifier[0].value.as_str()),
+        ),
+        _ => (None, None),
+    }
+}
+
 fn could_select_item_be_in_relation<'a>(
     item: &'a SelectItem,
     table: &'a TableFactor,
@@ -258,17 +271,13 @@ fn could_select_item_be_in_relation<'a>(
 ) -> Option<(&'a str, &'a str)> {
     // returns item_name, table_name if item could be in table but is not
 
-    let (col_name, col_table_alias): (Option<&str>, Option<&str>) = match item {
-        SelectItem::UnnamedExpr(expression) => match expression {
-            Expr::Identifier(identifier) => (Some(identifier.value.as_str()), None),
-            Expr::CompoundIdentifier(identifier) if identifier.len() == 2 => (
-                Some(identifier[1].value.as_str()),
-                Some(identifier[0].value.as_str()),
-            ),
-            _ => (None, None),
-        },
-        // TODO: aliased columns
-        // SelectItem::ExprWithAlias { expr, alias } => {},
+    // `SELECT expr` and `SELECT expr AS alias` resolve the same underlying
+    // column reference — the alias only renames the output.
+    let (col_name, col_table_alias) = match item {
+        SelectItem::UnnamedExpr(expression)
+        | SelectItem::ExprWithAlias {
+            expr: expression, ..
+        } => direct_col_ref(expression),
         _ => (None, None),
     };
 
