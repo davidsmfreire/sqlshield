@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use sqlparser::ast::{Assignment, Expr, TableFactor, TableWithJoins};
 
+use crate::schema::sql::lc;
 use crate::schema::TablesAndColumns;
 use crate::validation::asserts;
 
@@ -33,7 +34,7 @@ pub(crate) fn validate_update<'a>(
                 let Some(last) = assignment.id.last() else {
                     continue;
                 };
-                if !cols.contains(last.value.as_str()) {
+                if !cols.contains(&lc(&last.value)) {
                     errors.push(format!(
                         "Column `{}` not found in table `{}`",
                         last.value,

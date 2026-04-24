@@ -5,6 +5,7 @@ use sqlparser::ast::{
     SelectItem, TableFactor, TableWithJoins,
 };
 
+use crate::schema::sql::lc;
 use crate::{schema, validation::asserts};
 
 use super::ClauseValidation;
@@ -177,17 +178,20 @@ fn collect_from_factor<'a>(factor: &'a TableFactor, out: &mut Vec<VisibleRelatio
 /// the real schema or CTE-derived extras). Returns `Some(true)` if yes,
 /// `Some(false)` if the relation is known but the column isn't, and `None`
 /// if the relation is entirely unknown (caller should not over-report).
+/// All identifier comparisons are ASCII case-insensitive.
 fn column_in_relation(
     col: &str,
     rel: &VisibleRelation<'_>,
     schema: &schema::TablesAndColumns,
     extras: &HashMap<&str, HashSet<&str>>,
 ) -> Option<bool> {
-    if let Some(cols) = schema.get(rel.name) {
-        return Some(cols.contains(col));
+    let rel_name_lc = lc(rel.name);
+    let col_lc = lc(col);
+    if let Some(cols) = schema.get(&rel_name_lc) {
+        return Some(cols.contains(&col_lc));
     }
-    if let Some(cols) = extras.get(rel.name) {
-        return Some(cols.contains(col));
+    if let Some(cols) = asserts::extras_get(extras, rel.name) {
+        return Some(asserts::set_contains_ci(cols, col));
     }
     None
 }
@@ -230,7 +234,9 @@ fn resolve_qualified(
     schema: &schema::TablesAndColumns,
     extras: &HashMap<&str, HashSet<&str>>,
 ) -> Option<String> {
-    let matched = relations.iter().find(|r| r.qualifier() == qualifier)?;
+    let matched = relations
+        .iter()
+        .find(|r| r.qualifier().eq_ignore_ascii_case(qualifier))?;
     match column_in_relation(col, matched, schema, extras) {
         Some(false) => Some(format!(
             "Column `{col}` not found in table `{}`",

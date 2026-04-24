@@ -1,6 +1,6 @@
 //! Parses schema definitions into the `TablesAndColumns` map consumed by validation.
 
-mod sql;
+pub(crate) mod sql;
 
 use std::{
     collections::{HashMap, HashSet},

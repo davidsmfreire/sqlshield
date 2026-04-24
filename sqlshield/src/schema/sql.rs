@@ -60,9 +60,12 @@ fn ingest_create_table(
     // names from the source query's projection. Plain CREATE TABLE uses
     // the explicit list. If both are present, the explicit list wins.
     let columns_set: HashSet<String> = if !columns.is_empty() {
-        columns.iter().map(|e| e.name.value.clone()).collect()
+        columns.iter().map(|e| lc(&e.name.value)).collect()
     } else if let Some(q) = query {
-        project_column_names(q).into_iter().collect()
+        project_column_names(q)
+            .into_iter()
+            .map(|s| lc(&s))
+            .collect()
     } else {
         HashSet::new()
     };
@@ -70,9 +73,11 @@ fn ingest_create_table(
     // Store the bare table name so unqualified queries resolve; if the
     // schema was declared as `schema.table`, ALSO store the fully
     // qualified form so qualified queries can be resolved strictly.
-    tables.insert(last_ident.value.clone(), columns_set.clone());
+    // Both keys are case-folded: identifier matching is ASCII case-insensitive
+    // throughout sqlshield.
+    tables.insert(lc(&last_ident.value), columns_set.clone());
     if name.0.len() > 1 {
-        tables.insert(display_name(name), columns_set);
+        tables.insert(lc(&display_name(name)), columns_set);
     }
 }
 
@@ -88,14 +93,24 @@ fn ingest_create_view(
     // Explicit column list `CREATE VIEW v(a, b) AS …` overrides whatever
     // names the body projects.
     let columns_set: HashSet<String> = if !columns.is_empty() {
-        columns.iter().map(|c| c.name.value.clone()).collect()
+        columns.iter().map(|c| lc(&c.name.value)).collect()
     } else {
-        project_column_names(query).into_iter().collect()
+        project_column_names(query)
+            .into_iter()
+            .map(|s| lc(&s))
+            .collect()
     };
-    tables.insert(last_ident.value.clone(), columns_set.clone());
+    tables.insert(lc(&last_ident.value), columns_set.clone());
     if name.0.len() > 1 {
-        tables.insert(display_name(name), columns_set);
+        tables.insert(lc(&display_name(name)), columns_set);
     }
+}
+
+/// Case-fold to ASCII lowercase. Used at every identifier insertion and
+/// lookup site so the schema map and query-side identifiers compare
+/// case-insensitively.
+pub(crate) fn lc(s: &str) -> String {
+    s.to_ascii_lowercase()
 }
 
 /// Owned-string version of `validation::project_columns`. Used at schema-
@@ -162,10 +177,10 @@ fn target_keys(name: &ObjectName, tables: &HashMap<String, HashSet<String>>) -> 
     let Some(last) = name.0.last() else {
         return Vec::new();
     };
-    let bare = last.value.as_str();
+    let bare = lc(&last.value);
     if name.0.len() > 1 {
         // Qualified ALTER: target only the exact qualified key.
-        let q = display_name(name);
+        let q = lc(&display_name(name));
         if tables.contains_key(&q) {
             return vec![q];
         }
@@ -180,7 +195,7 @@ fn target_keys(name: &ObjectName, tables: &HashMap<String, HashSet<String>>) -> 
             k.as_str() == bare
                 || k.rsplit('.')
                     .next()
-                    .is_some_and(|seg| seg == bare && k != &bare)
+                    .is_some_and(|seg| seg == bare && k.as_str() != bare)
         })
         .cloned()
         .collect()
@@ -189,17 +204,17 @@ fn target_keys(name: &ObjectName, tables: &HashMap<String, HashSet<String>>) -> 
 fn apply_one(cols: &mut HashSet<String>, op: &AlterTableOperation) {
     match op {
         AlterTableOperation::AddColumn { column_def, .. } => {
-            cols.insert(column_def.name.value.clone());
+            cols.insert(lc(&column_def.name.value));
         }
         AlterTableOperation::DropColumn { column_name, .. } => {
-            cols.remove(column_name.value.as_str());
+            cols.remove(lc(&column_name.value).as_str());
         }
         AlterTableOperation::RenameColumn {
             old_column_name,
             new_column_name,
         } => {
-            if cols.remove(old_column_name.value.as_str()) {
-                cols.insert(new_column_name.value.clone());
+            if cols.remove(lc(&old_column_name.value).as_str()) {
+                cols.insert(lc(&new_column_name.value));
             }
         }
         // Other ops (constraints, RLS, RENAME TABLE, …) don't change the

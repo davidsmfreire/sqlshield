@@ -2,6 +2,7 @@
 
 use sqlparser::ast::{Ident, ObjectName};
 
+use crate::schema::sql::lc;
 use crate::schema::TablesAndColumns;
 
 use super::table_ref::{display_name, resolve_table_columns};
@@ -22,7 +23,7 @@ pub(crate) fn validate_insert(
     };
 
     for col in columns {
-        if !cols.contains(col.value.as_str()) {
+        if !cols.contains(&lc(&col.value)) {
             errors.push(format!(
                 "Column `{}` not found in table `{}`",
                 col.value,
