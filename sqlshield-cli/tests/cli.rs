@@ -1,5 +1,6 @@
 //! End-to-end CLI tests — invoke the compiled binary to exercise flags.
 
+use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -63,6 +64,70 @@ fn stdin_invalid_query_exits_one() {
 fn missing_schema_exits_two() {
     let output = Command::new(cli_bin())
         .args(["--schema", "/definitely/nope/schema.sql"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn config_file_supplies_schema_path() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("my-schema.sql"),
+        b"CREATE TABLE widgets (id INT);",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".sqlshield.toml"),
+        br#"schema = "my-schema.sql""#,
+    )
+    .unwrap();
+    // No source files to scan → no validation errors, exit 0.
+    let output = Command::new(cli_bin())
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_flag_overrides_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join(".sqlshield.toml"),
+        br#"schema = "never-resolved.sql""#,
+    )
+    .unwrap();
+    let real_schema = dir.path().join("real.sql");
+    fs::write(&real_schema, b"CREATE TABLE t (id INT);").unwrap();
+
+    let output = Command::new(cli_bin())
+        .current_dir(dir.path())
+        .args(["--schema"])
+        .arg(&real_schema)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn malformed_config_file_returns_exit_two() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join(".sqlshield.toml"),
+        b"this is ::: not toml {{{",
+    )
+    .unwrap();
+    let output = Command::new(cli_bin())
+        .current_dir(dir.path())
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));

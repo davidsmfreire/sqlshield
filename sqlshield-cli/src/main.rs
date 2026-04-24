@@ -1,3 +1,5 @@
+mod config;
+
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -28,8 +30,8 @@ struct Args {
 
     /// SQL dialect to parse with (generic, postgres, mysql, sqlite, mssql,
     /// snowflake, bigquery, redshift, clickhouse, duckdb, hive, ansi).
-    #[arg(long, default_value = "generic")]
-    dialect: Dialect,
+    #[arg(long)]
+    dialect: Option<Dialect>,
 
     /// Output format.
     #[arg(long, value_enum, default_value = "text")]
@@ -54,19 +56,36 @@ struct JsonStdinReport<'a> {
 
 fn main() -> ExitCode {
     let args = Args::parse();
+
+    // Layer: CLI flags > .sqlshield.toml > defaults.
+    let file_config = match config::load_from(std::path::Path::new(".")) {
+        Ok(cfg) => cfg.unwrap_or_default(),
+        Err(err) => {
+            eprintln!("sqlshield: {err}");
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+    };
+
     let schema_path = args
         .schema
         .clone()
+        .or(file_config.schema)
         .unwrap_or_else(|| PathBuf::from("schema.sql"));
 
+    let dialect = args.dialect.or(file_config.dialect).unwrap_or_default();
+
     if args.stdin {
-        return run_stdin(&schema_path, args.dialect, args.format);
+        return run_stdin(&schema_path, dialect, args.format);
     }
 
-    let directory = args.directory.clone().unwrap_or_else(|| PathBuf::from("."));
+    let directory = args
+        .directory
+        .clone()
+        .or(file_config.directory)
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let validation_errors =
-        match sqlshield::validate_files_with_dialect(&directory, &schema_path, args.dialect) {
+        match sqlshield::validate_files_with_dialect(&directory, &schema_path, dialect) {
             Ok(errors) => errors,
             Err(err) => {
                 eprintln!("sqlshield: {err}");
