@@ -1,0 +1,36 @@
+name: Bug report
+description: Something sqlshield does that it shouldn't (or vice versa).
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the unexpected behavior.
+      placeholder: sqlshield reports ... but it should ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducer
+      description: |
+        Paste the source snippet, schema SQL, and command you ran.
+        Keep it as small as possible.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sqlshield version
+      description: "Output of `sqlshield --version`."
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: "OS + architecture, e.g. `Linux x86_64`, `macOS arm64`."
+    validations:
+      required: true
