@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, GroupByExpr, Select, SelectItem, TableFactor,
-    TableWithJoins,
+    Expr, FunctionArg, FunctionArgExpr, GroupByExpr, JoinConstraint, JoinOperator, Select,
+    SelectItem, TableFactor, TableWithJoins,
 };
 
 use crate::{schema, validation::asserts};
@@ -62,7 +62,7 @@ pub(crate) fn validate_exprs_in_select_scope(
 /// Collect the output names of `SELECT expr AS alias` projection items.
 /// Referenced by HAVING / GROUP BY / ORDER BY per Postgres/MySQL extensions to
 /// standard SQL.
-fn collect_projection_aliases<'a>(select: &'a Select) -> HashSet<&'a str> {
+fn collect_projection_aliases(select: &Select) -> HashSet<&str> {
     let mut out = HashSet::new();
     for item in &select.projection {
         if let SelectItem::ExprWithAlias { alias, .. } = item {
@@ -70,6 +70,22 @@ fn collect_projection_aliases<'a>(select: &'a Select) -> HashSet<&'a str> {
         }
     }
     out
+}
+
+/// Borrow the `JoinConstraint` out of any `JoinOperator` that carries one.
+/// CrossJoin / CrossApply / OuterApply have no constraint.
+fn join_constraint(op: &JoinOperator) -> Option<&JoinConstraint> {
+    match op {
+        JoinOperator::Inner(c)
+        | JoinOperator::LeftOuter(c)
+        | JoinOperator::RightOuter(c)
+        | JoinOperator::FullOuter(c)
+        | JoinOperator::LeftSemi(c)
+        | JoinOperator::RightSemi(c)
+        | JoinOperator::LeftAnti(c)
+        | JoinOperator::RightAnti(c) => Some(c),
+        JoinOperator::CrossJoin | JoinOperator::CrossApply | JoinOperator::OuterApply => None,
+    }
 }
 
 pub(crate) fn collect_visible_relations<'a>(
@@ -305,6 +321,11 @@ impl ClauseValidation for Select {
         let select = self;
         let mut errors = vec![];
 
+        // Visible relations are needed both for FROM/JOIN constraint walks
+        // and for WHERE/HAVING/GROUP BY below, so build them once up front.
+        let visible = collect_visible_relations(&select.from);
+        let no_aliases: HashSet<&str> = HashSet::new();
+
         for item in &select.from {
             if let Some(relation_name) =
                 asserts::is_relation_in_schema(&item.relation, schema, extras)
@@ -321,6 +342,35 @@ impl ClauseValidation for Select {
                     errors.push(format!(
                         "Table `{relation_name}` not found in schema nor subqueries"
                     ))
+                }
+
+                // ON / USING constraint column checks.
+                if let Some(constraint) = join_constraint(&join.join_operator) {
+                    match constraint {
+                        JoinConstraint::On(expr) => {
+                            validate_expr_column_refs(
+                                expr,
+                                &visible,
+                                schema,
+                                extras,
+                                &no_aliases,
+                                &mut errors,
+                            );
+                        }
+                        JoinConstraint::Using(cols) => {
+                            for col in cols {
+                                if let Some(err) = resolve_unqualified(
+                                    col.value.as_str(),
+                                    &visible,
+                                    schema,
+                                    extras,
+                                ) {
+                                    errors.push(err);
+                                }
+                            }
+                        }
+                        JoinConstraint::Natural | JoinConstraint::None => {}
+                    }
                 }
             }
         }
@@ -340,11 +390,9 @@ impl ClauseValidation for Select {
             }
         }
 
-        // WHERE / HAVING / GROUP BY column references.
-        let visible = collect_visible_relations(&select.from);
+        // WHERE / HAVING / GROUP BY column references. `visible` and
+        // `no_aliases` were built above for the JOIN pass.
         let aliases = collect_projection_aliases(select);
-        // WHERE per standard SQL can't see projection aliases (eval order).
-        let no_aliases: HashSet<&str> = HashSet::new();
 
         if let Some(where_expr) = &select.selection {
             validate_expr_column_refs(
