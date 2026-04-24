@@ -130,7 +130,19 @@ pub fn validate_query_with_schema<'a>(
     query: &'a Query,
     schema: &schema::TablesAndColumns,
 ) -> Vec<String> {
-    let mut extras: HashMap<&'a str, HashSet<&'a str>> = HashMap::new();
+    let empty: HashMap<&'a str, HashSet<&'a str>> = HashMap::new();
+    validate_query_with_scope(query, schema, &empty)
+}
+
+/// Like [`validate_query_with_schema`] but threads a parent `extras` map
+/// through so subqueries can see CTEs defined in enclosing scopes. Used for
+/// nested subqueries (IN / EXISTS / scalar) and for CTE-to-CTE references.
+pub(crate) fn validate_query_with_scope<'a>(
+    query: &'a Query,
+    schema: &schema::TablesAndColumns,
+    parent_extras: &HashMap<&'a str, HashSet<&'a str>>,
+) -> Vec<String> {
+    let mut extras: HashMap<&'a str, HashSet<&'a str>> = parent_extras.clone();
     let mut errors: Vec<String> = vec![];
 
     validate_and_extract_subqueries(query, schema, &mut extras, &mut errors);

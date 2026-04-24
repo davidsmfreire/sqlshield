@@ -44,8 +44,16 @@ pub(crate) fn validate_delete(
     }
     let visible = collect_visible_relations(&all_sources);
 
+    let no_aliases: HashSet<&str> = HashSet::new();
     if let Some(where_expr) = selection {
-        validate_expr_column_refs(where_expr, &visible, schema, &extras, &mut errors);
+        validate_expr_column_refs(
+            where_expr,
+            &visible,
+            schema,
+            &extras,
+            &no_aliases,
+            &mut errors,
+        );
     }
 
     errors

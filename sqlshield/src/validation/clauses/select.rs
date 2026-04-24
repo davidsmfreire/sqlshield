@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::ops::ControlFlow;
 
 use sqlparser::ast::{
-    visit_expressions, Expr, GroupByExpr, Select, SelectItem, TableFactor, TableWithJoins,
+    Expr, FunctionArg, FunctionArgExpr, GroupByExpr, Select, SelectItem, TableFactor,
+    TableWithJoins,
 };
 
 use crate::{schema, validation::asserts};
@@ -51,11 +51,25 @@ pub(crate) fn validate_exprs_in_select_scope(
     extras: &HashMap<&str, HashSet<&str>>,
 ) -> Vec<String> {
     let visible = collect_visible_relations(&select.from);
+    let aliases = collect_projection_aliases(select);
     let mut errors = Vec::new();
     for expr in exprs {
-        validate_expr_column_refs(expr, &visible, schema, extras, &mut errors);
+        validate_expr_column_refs(expr, &visible, schema, extras, &aliases, &mut errors);
     }
     errors
+}
+
+/// Collect the output names of `SELECT expr AS alias` projection items.
+/// Referenced by HAVING / GROUP BY / ORDER BY per Postgres/MySQL extensions to
+/// standard SQL.
+fn collect_projection_aliases<'a>(select: &'a Select) -> HashSet<&'a str> {
+    let mut out = HashSet::new();
+    for item in &select.projection {
+        if let SelectItem::ExprWithAlias { alias, .. } = item {
+            out.insert(alias.value.as_str());
+        }
+    }
+    out
 }
 
 pub(crate) fn collect_visible_relations<'a>(
@@ -138,28 +152,148 @@ pub(crate) fn validate_expr_column_refs(
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
     extras: &HashMap<&str, HashSet<&str>>,
+    aliases: &HashSet<&str>,
     errors: &mut Vec<String>,
 ) {
-    let _: ControlFlow<()> = visit_expressions(root, |e| {
-        match e {
-            Expr::Identifier(ident) => {
-                if let Some(err) =
-                    resolve_unqualified(ident.value.as_str(), relations, schema, extras)
-                {
-                    errors.push(err);
-                }
+    walk_expr(root, relations, schema, extras, aliases, errors);
+}
+
+/// Manual recursion over `Expr`. Unlike `sqlparser::ast::visit_expressions`,
+/// this does NOT descend blindly into subqueries — those are handed off to
+/// `validate_query_with_scope` with a fresh scope so their identifiers
+/// resolve against their own FROM, not the enclosing one.
+fn walk_expr(
+    expr: &Expr,
+    relations: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&str, HashSet<&str>>,
+    aliases: &HashSet<&str>,
+    errors: &mut Vec<String>,
+) {
+    match expr {
+        Expr::Identifier(ident) => {
+            let col = ident.value.as_str();
+            if aliases.contains(col) {
+                return;
             }
-            Expr::CompoundIdentifier(idents) if idents.len() == 2 => {
-                let qualifier = idents[0].value.as_str();
-                let col = idents[1].value.as_str();
-                if let Some(err) = resolve_qualified(qualifier, col, relations, schema, extras) {
-                    errors.push(err);
-                }
+            if let Some(err) = resolve_unqualified(col, relations, schema, extras) {
+                errors.push(err);
             }
-            _ => {}
         }
-        ControlFlow::Continue(())
-    });
+        Expr::CompoundIdentifier(idents) if idents.len() == 2 => {
+            let qualifier = idents[0].value.as_str();
+            let col = idents[1].value.as_str();
+            if let Some(err) = resolve_qualified(qualifier, col, relations, schema, extras) {
+                errors.push(err);
+            }
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            walk_expr(left, relations, schema, extras, aliases, errors);
+            walk_expr(right, relations, schema, extras, aliases, errors);
+        }
+        Expr::UnaryOp { expr, .. }
+        | Expr::Nested(expr)
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr)
+        | Expr::IsTrue(expr)
+        | Expr::IsFalse(expr)
+        | Expr::IsUnknown(expr)
+        | Expr::IsNotTrue(expr)
+        | Expr::IsNotFalse(expr)
+        | Expr::IsNotUnknown(expr)
+        | Expr::Cast { expr, .. }
+        | Expr::TryCast { expr, .. }
+        | Expr::SafeCast { expr, .. }
+        | Expr::Collate { expr, .. } => {
+            walk_expr(expr, relations, schema, extras, aliases, errors);
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            walk_expr(expr, relations, schema, extras, aliases, errors);
+            walk_expr(low, relations, schema, extras, aliases, errors);
+            walk_expr(high, relations, schema, extras, aliases, errors);
+        }
+        Expr::InList { expr, list, .. } => {
+            walk_expr(expr, relations, schema, extras, aliases, errors);
+            for item in list {
+                walk_expr(item, relations, schema, extras, aliases, errors);
+            }
+        }
+        Expr::Like { expr, pattern, .. }
+        | Expr::ILike { expr, pattern, .. }
+        | Expr::SimilarTo { expr, pattern, .. }
+        | Expr::RLike { expr, pattern, .. } => {
+            walk_expr(expr, relations, schema, extras, aliases, errors);
+            walk_expr(pattern, relations, schema, extras, aliases, errors);
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            results,
+            else_result,
+        } => {
+            if let Some(op) = operand {
+                walk_expr(op, relations, schema, extras, aliases, errors);
+            }
+            for c in conditions {
+                walk_expr(c, relations, schema, extras, aliases, errors);
+            }
+            for r in results {
+                walk_expr(r, relations, schema, extras, aliases, errors);
+            }
+            if let Some(e) = else_result {
+                walk_expr(e, relations, schema, extras, aliases, errors);
+            }
+        }
+        Expr::Function(f) => {
+            for arg in &f.args {
+                match arg {
+                    FunctionArg::Named {
+                        arg: FunctionArgExpr::Expr(e),
+                        ..
+                    }
+                    | FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
+                        walk_expr(e, relations, schema, extras, aliases, errors);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Expr::AnyOp { left, right, .. } | Expr::AllOp { left, right, .. } => {
+            walk_expr(left, relations, schema, extras, aliases, errors);
+            walk_expr(right, relations, schema, extras, aliases, errors);
+        }
+        // Subquery boundaries: hand off to the query validator with a fresh
+        // scope. The enclosing `extras` (CTEs, derived tables visible at this
+        // level) are threaded down so the inner query can see them.
+        Expr::Subquery(q) => {
+            errors.extend(crate::validation::validate_query_with_scope(
+                q.as_ref(),
+                schema,
+                extras,
+            ));
+        }
+        Expr::Exists { subquery, .. } => {
+            errors.extend(crate::validation::validate_query_with_scope(
+                subquery.as_ref(),
+                schema,
+                extras,
+            ));
+        }
+        Expr::InSubquery { expr, subquery, .. } => {
+            walk_expr(expr, relations, schema, extras, aliases, errors);
+            errors.extend(crate::validation::validate_query_with_scope(
+                subquery.as_ref(),
+                schema,
+                extras,
+            ));
+        }
+        // Leave literals, wildcards, typed strings, and uncommon variants
+        // (Substring, Trim, Extract, Overlay, …) alone. Missing coverage here
+        // is a false negative, not a false positive — safer default.
+        _ => {}
+    }
 }
 
 impl ClauseValidation for Select {
@@ -208,16 +342,26 @@ impl ClauseValidation for Select {
 
         // WHERE / HAVING / GROUP BY column references.
         let visible = collect_visible_relations(&select.from);
+        let aliases = collect_projection_aliases(select);
+        // WHERE per standard SQL can't see projection aliases (eval order).
+        let no_aliases: HashSet<&str> = HashSet::new();
 
         if let Some(where_expr) = &select.selection {
-            validate_expr_column_refs(where_expr, &visible, schema, extras, &mut errors);
+            validate_expr_column_refs(
+                where_expr,
+                &visible,
+                schema,
+                extras,
+                &no_aliases,
+                &mut errors,
+            );
         }
         if let Some(having_expr) = &select.having {
-            validate_expr_column_refs(having_expr, &visible, schema, extras, &mut errors);
+            validate_expr_column_refs(having_expr, &visible, schema, extras, &aliases, &mut errors);
         }
         if let GroupByExpr::Expressions(exprs) = &select.group_by {
             for expr in exprs {
-                validate_expr_column_refs(expr, &visible, schema, extras, &mut errors);
+                validate_expr_column_refs(expr, &visible, schema, extras, &aliases, &mut errors);
             }
         }
 

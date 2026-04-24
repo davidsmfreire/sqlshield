@@ -50,14 +50,31 @@ pub(crate) fn validate_update(
     }
     let visible = collect_visible_relations(&relation_sources);
 
+    // UPDATE has no projection aliases.
+    let no_aliases: HashSet<&str> = HashSet::new();
+
     // Validate WHERE expressions' column refs.
     if let Some(where_expr) = selection {
-        validate_expr_column_refs(where_expr, &visible, schema, &extras, &mut errors);
+        validate_expr_column_refs(
+            where_expr,
+            &visible,
+            schema,
+            &extras,
+            &no_aliases,
+            &mut errors,
+        );
     }
 
     // Validate assignment RHS expressions' column refs.
     for assignment in assignments {
-        validate_expr_column_refs(&assignment.value, &visible, schema, &extras, &mut errors);
+        validate_expr_column_refs(
+            &assignment.value,
+            &visible,
+            schema,
+            &extras,
+            &no_aliases,
+            &mut errors,
+        );
     }
 
     errors
