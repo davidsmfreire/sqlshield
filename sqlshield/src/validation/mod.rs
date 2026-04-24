@@ -75,8 +75,52 @@ pub fn validate_statements_with_schema(
     let mut errors: Vec<String> = Vec::new();
 
     for statement in query {
-        if let Statement::Query(query_box) = statement {
-            errors.append(&mut validate_query_with_schema(query_box.as_ref(), schema));
+        match statement {
+            Statement::Query(query_box) => {
+                errors.extend(validate_query_with_schema(query_box.as_ref(), schema));
+            }
+            Statement::Insert {
+                table_name,
+                columns,
+                source,
+                ..
+            } => {
+                errors.extend(clauses::insert::validate_insert(
+                    table_name, columns, schema,
+                ));
+                if let Some(source_query) = source {
+                    errors.extend(validate_query_with_schema(source_query.as_ref(), schema));
+                }
+            }
+            Statement::Update {
+                table,
+                assignments,
+                from,
+                selection,
+                ..
+            } => {
+                errors.extend(clauses::update::validate_update(
+                    table,
+                    assignments,
+                    from.as_ref(),
+                    selection.as_ref(),
+                    schema,
+                ));
+            }
+            Statement::Delete {
+                from,
+                using,
+                selection,
+                ..
+            } => {
+                errors.extend(clauses::delete::validate_delete(
+                    from,
+                    using.as_deref(),
+                    selection.as_ref(),
+                    schema,
+                ));
+            }
+            _ => {}
         }
     }
     errors
@@ -111,7 +155,6 @@ pub fn validate_query_with_schema<'a>(
             ));
         }
     }
-    // TODO: inserts, updates, ...
 
     errors
 }

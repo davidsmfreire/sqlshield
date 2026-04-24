@@ -10,7 +10,7 @@ use crate::{schema, validation::asserts};
 use super::ClauseValidation;
 
 /// A table (or CTE-derived relation) visible to the current Select scope.
-struct VisibleRelation<'a> {
+pub(crate) struct VisibleRelation<'a> {
     /// Last segment of the table name (`users` in `public.users`).
     name: &'a str,
     /// Alias if one was given (`u` in `users u`).
@@ -58,7 +58,9 @@ pub(crate) fn validate_exprs_in_select_scope(
     errors
 }
 
-fn collect_visible_relations<'a>(tables: &'a [TableWithJoins]) -> Vec<VisibleRelation<'a>> {
+pub(crate) fn collect_visible_relations<'a>(
+    tables: &'a [TableWithJoins],
+) -> Vec<VisibleRelation<'a>> {
     let mut out = Vec::new();
     for t in tables {
         if let Some(r) = VisibleRelation::from_factor(&t.relation) {
@@ -131,7 +133,7 @@ fn resolve_qualified(
     }
 }
 
-fn validate_expr_column_refs(
+pub(crate) fn validate_expr_column_refs(
     root: &Expr,
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,

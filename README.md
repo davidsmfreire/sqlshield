@@ -41,16 +41,20 @@ The tool validates the following main clauses:
 - SELECT :heavy_check_mark:
   - WITH :heavy_check_mark:
   - JOIN :heavy_check_mark:
-- INSERT :x:
-- UPDATE :x:
-- DELETE :x:
+  - Derived tables (`FROM (SELECT …) alias`) :heavy_check_mark:
+- INSERT :heavy_check_mark:
+- UPDATE :heavy_check_mark:
+- DELETE :heavy_check_mark:
 
 Other clauses:
 
-- WHERE :x:
-- ORDER BY :x:
-- GROUP BY :x:
-- HAVING :x:
+- WHERE :heavy_check_mark:
+- ORDER BY :heavy_check_mark:
+- GROUP BY :heavy_check_mark:
+- HAVING :heavy_check_mark:
+
+Schema-qualified table names (`public.users`) are resolved strictly
+when the query is qualified and permissively when unqualified.
 
 ## Similar work
 
