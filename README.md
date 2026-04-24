@@ -1,6 +1,6 @@
 # SQL Shield
 
-Validate raw SQL queries present in your Python codebase against a schema using ```sqlshield```:
+Validate raw SQL queries present in your Python or Rust codebase against a schema using ```sqlshield```:
 
 ```shell
 $ sqlshield --help
@@ -55,6 +55,12 @@ Other clauses:
 
 Schema-qualified table names (`public.users`) are resolved strictly
 when the query is qualified and permissively when unqualified.
+
+## Editor integration
+
+[`sqlshield-lsp`](sqlshield-lsp/README.md) provides a Language Server
+Protocol front-end so any LSP-aware editor (VS Code, Neovim, Helix, …) can
+show diagnostics inline on the offending SQL string.
 
 ## Similar work
 

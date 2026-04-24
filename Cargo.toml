@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "sqlshield",
   "sqlshield-cli",
+  "sqlshield-lsp",
   "sqlshield-py",
 ]
 
