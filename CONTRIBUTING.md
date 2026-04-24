@@ -65,7 +65,7 @@ Vec<SqlValidationError>
 - `sqlshield` — core library (no I/O concerns beyond reading files to scan)
 - `sqlshield-cli` — thin clap-based CLI wrapper
 - `sqlshield-py` — PyO3 bindings exposing `validate_query` / `validate_files`
-- `sqlshield-gui` — Slint prototype
+- `sqlshield-lsp` — Language Server for editor integration
 
 ## Releases
 
