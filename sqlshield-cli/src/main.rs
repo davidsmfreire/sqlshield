@@ -1,46 +1,163 @@
-use clap::Parser;
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
-use sqlshield::Dialect;
+use clap::{Parser, ValueEnum};
+use serde::Serialize;
+use sqlshield::{Dialect, SqlShieldError};
+
+const EXIT_VALIDATION_ERRORS: u8 = 1;
+const EXIT_CONFIG_ERROR: u8 = 2;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = "")]
 struct Args {
-    /// Directory. Defaults to "." (current)
+    /// Directory. Defaults to "." (current). Ignored in --stdin mode.
     #[arg(short, long, value_hint = clap::ValueHint::DirPath)]
-    directory: Option<std::path::PathBuf>,
+    directory: Option<PathBuf>,
 
-    /// Schema file. Defaults to "schema.sql"
-    #[arg(short, long, value_hint = clap::ValueHint::DirPath)]
-    schema: Option<std::path::PathBuf>,
+    /// Schema file. Defaults to "schema.sql".
+    #[arg(short, long, value_hint = clap::ValueHint::FilePath)]
+    schema: Option<PathBuf>,
 
     /// SQL dialect to parse with (generic, postgres, mysql, sqlite, mssql,
     /// snowflake, bigquery, redshift, clickhouse, duckdb, hive, ansi).
     #[arg(long, default_value = "generic")]
     dialect: Dialect,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value = "text")]
+    format: OutputFormat,
+
+    /// Read a single SQL query from stdin and validate it. Useful for
+    /// editor integrations. Ignores --directory.
+    #[arg(long, conflicts_with = "directory")]
+    stdin: bool,
 }
 
-fn main() {
-    let args = Args::parse();
+#[derive(Serialize)]
+struct JsonErrorReport<'a> {
+    location: &'a str,
+    description: &'a str,
+}
 
-    let directory = args.directory.unwrap_or(std::path::PathBuf::from("."));
-    let schema = args
+#[derive(Serialize)]
+struct JsonStdinReport<'a> {
+    description: &'a str,
+}
+
+fn main() -> ExitCode {
+    let args = Args::parse();
+    let schema_path = args
         .schema
-        .unwrap_or(std::path::PathBuf::from("schema.sql"));
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("schema.sql"));
+
+    if args.stdin {
+        return run_stdin(&schema_path, args.dialect, args.format);
+    }
+
+    let directory = args.directory.clone().unwrap_or_else(|| PathBuf::from("."));
 
     let validation_errors =
-        match sqlshield::validate_files_with_dialect(&directory, &schema, args.dialect) {
+        match sqlshield::validate_files_with_dialect(&directory, &schema_path, args.dialect) {
             Ok(errors) => errors,
             Err(err) => {
                 eprintln!("sqlshield: {err}");
-                std::process::exit(1);
+                return ExitCode::from(EXIT_CONFIG_ERROR);
             }
         };
 
-    for error in &validation_errors {
-        println!("{error}");
+    match args.format {
+        OutputFormat::Text => {
+            for error in &validation_errors {
+                println!("{error}");
+            }
+        }
+        OutputFormat::Json => {
+            let reports: Vec<JsonErrorReport<'_>> = validation_errors
+                .iter()
+                .map(|e| JsonErrorReport {
+                    location: &e.location,
+                    description: &e.description,
+                })
+                .collect();
+            match serde_json::to_string_pretty(&reports) {
+                Ok(s) => println!("{s}"),
+                Err(err) => {
+                    eprintln!("sqlshield: failed to serialize JSON: {err}");
+                    return ExitCode::from(EXIT_CONFIG_ERROR);
+                }
+            }
+        }
     }
 
-    if !validation_errors.is_empty() {
-        std::process::exit(1);
+    if validation_errors.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(EXIT_VALIDATION_ERRORS)
+    }
+}
+
+fn run_stdin(schema_path: &std::path::Path, dialect: Dialect, format: OutputFormat) -> ExitCode {
+    let mut query = String::new();
+    if let Err(err) = std::io::stdin().read_to_string(&mut query) {
+        eprintln!("sqlshield: failed to read stdin: {err}");
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+
+    let schema_source = match std::fs::read_to_string(schema_path) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!(
+                "sqlshield: failed to read schema {}: {err}",
+                schema_path.display()
+            );
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+    };
+
+    match sqlshield::validate_query_with_dialect(&query, &schema_source, dialect) {
+        Ok(errors) => {
+            match format {
+                OutputFormat::Text => {
+                    for err in &errors {
+                        println!("{err}");
+                    }
+                }
+                OutputFormat::Json => {
+                    let reports: Vec<JsonStdinReport<'_>> = errors
+                        .iter()
+                        .map(|e| JsonStdinReport { description: e })
+                        .collect();
+                    match serde_json::to_string_pretty(&reports) {
+                        Ok(s) => println!("{s}"),
+                        Err(err) => {
+                            eprintln!("sqlshield: failed to serialize JSON: {err}");
+                            return ExitCode::from(EXIT_CONFIG_ERROR);
+                        }
+                    }
+                }
+            }
+            if errors.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(EXIT_VALIDATION_ERRORS)
+            }
+        }
+        Err(err @ SqlShieldError::SqlParse(_)) => {
+            eprintln!("sqlshield: {err}");
+            ExitCode::from(EXIT_VALIDATION_ERRORS)
+        }
+        Err(err) => {
+            eprintln!("sqlshield: {err}");
+            ExitCode::from(EXIT_CONFIG_ERROR)
+        }
     }
 }
