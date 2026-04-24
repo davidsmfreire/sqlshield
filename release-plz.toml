@@ -1,0 +1,10 @@
+[workspace]
+changelog_update = true
+git_release_enable = true
+publish = true
+semver_check = false
+
+[[package]]
+name = "sqlshield-gui"
+publish = false
+git_release_enable = false
