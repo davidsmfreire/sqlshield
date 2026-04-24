@@ -1,20 +1,21 @@
 use sqlparser::{ast::Statement, dialect::GenericDialect, parser::Parser};
 use std::collections::{HashMap, HashSet};
 
-pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns, String> {
+use crate::error::Result;
+
+pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns> {
     let schema_str = String::from_utf8_lossy(schema);
 
     let dialect = GenericDialect {};
-    let statements = match Parser::parse_sql(&dialect, schema_str.as_ref()) {
-        Ok(statements) => statements,
-        Err(err) => return Err(format!("Could not parse schema file: {err}")),
-    };
+    let statements = Parser::parse_sql(&dialect, schema_str.as_ref())?;
 
     let mut tables: HashMap<String, HashSet<String>> = HashMap::new();
     for statement in statements {
         if let Statement::CreateTable { columns, name, .. } = statement {
-            // ! Ignoring schema, by getting last ident only gets table name
-            let last_ident = name.0.last().unwrap();
+            // Only the table name is retained; schema/database qualifiers are discarded.
+            let Some(last_ident) = name.0.last() else {
+                continue;
+            };
             let columns_set: HashSet<String> =
                 HashSet::from_iter(columns.iter().map(|e| e.name.value.clone()));
             tables.insert(last_ident.value.clone(), columns_set);

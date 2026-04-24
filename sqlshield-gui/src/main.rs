@@ -20,7 +20,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let schema = ui.get_schema();
             let errors = match sqlshield::validate_query(queries.as_str(), schema.as_str()) {
                 Ok(errors) => errors,
-                Err(err) => vec![err],
+                Err(err) => vec![err.to_string()],
             };
 
             let model: Rc<slint::VecModel<slint::StandardListViewItem>> =

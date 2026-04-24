@@ -10,7 +10,12 @@ pub fn is_relation_in_schema(
     match relation {
         sqlparser::ast::TableFactor::Table { name, .. } => {
             // TODO support table name with schema prefixed instead of using last ident
-            let table_name = name.0.last().unwrap().value.as_str();
+            let table_name = name
+                .0
+                .last()
+                .expect("sqlparser guarantees ObjectName has ≥1 ident")
+                .value
+                .as_str();
             if schema.contains_key(table_name) || extras.contains_key(table_name) {
                 return None;
             }

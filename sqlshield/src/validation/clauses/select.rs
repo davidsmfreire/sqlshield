@@ -37,8 +37,7 @@ impl ClauseValidation for sqlparser::ast::Select {
             let result = is_select_item_in_relations(item, &select.from, schema, extras);
 
             if let Some((item_name, relations_not_found_in)) = result {
-                if relations_not_found_in.len() == 1 {
-                    let table = relations_not_found_in.first().unwrap();
+                if let [table] = relations_not_found_in.as_slice() {
                     errors.push(format!("Column `{item_name}` not found in table `{table}`"))
                 } else {
                     let not_found_on = relations_not_found_in.join(",");
@@ -111,9 +110,14 @@ fn could_select_item_be_in_relation<'a>(
     };
 
     let (table_name, alias) = match table {
-        sqlparser::ast::TableFactor::Table { name, alias, .. } => {
-            (name.0.last().unwrap().value.as_str(), alias.as_ref())
-        }
+        sqlparser::ast::TableFactor::Table { name, alias, .. } => (
+            name.0
+                .last()
+                .expect("sqlparser guarantees ObjectName has ≥1 ident")
+                .value
+                .as_str(),
+            alias.as_ref(),
+        ),
         // TODO Implement for others
         _ => return None,
     };

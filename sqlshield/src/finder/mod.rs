@@ -1,9 +1,11 @@
+//! Locates SQL strings inside source files by walking a tree-sitter AST.
+
 mod python;
 mod rust;
 
 use std::{fs, path::Path};
 
-use sqlparser;
+use crate::error::{Result, SqlShieldError};
 
 pub struct QueryInCode {
     pub line: usize,
@@ -12,24 +14,23 @@ pub struct QueryInCode {
 
 pub const SUPPORTED_CODE_FILE_EXTENSIONS: [&str; 2] = ["py", "rs"];
 
-pub fn find_queries_in_file(file_path: &Path) -> Result<Vec<super::QueryInCode>, String> {
-    let code = fs::read(file_path);
-    let file_extension = &file_path.extension().unwrap().to_string_lossy();
-    match code {
-        Ok(code) => find_queries_in_code(&code, file_extension),
-        Err(err) => Err(format!(
-            "Could not open {:?} due to error: {err}",
-            file_path
-        )),
-    }
+pub fn find_queries_in_file(file_path: &Path) -> Result<Vec<QueryInCode>> {
+    let file_extension = file_path
+        .extension()
+        .ok_or_else(|| SqlShieldError::MissingExtension(file_path.to_path_buf()))?
+        .to_string_lossy();
+
+    let code = fs::read(file_path).map_err(|source| SqlShieldError::Io {
+        path: file_path.to_path_buf(),
+        source,
+    })?;
+
+    find_queries_in_code(&code, &file_extension)
 }
 
 type NodeQueryExtractor = fn(&tree_sitter::Node, &[u8]) -> Option<String>;
 
-pub fn find_queries_in_code(
-    code: &[u8],
-    file_extension: &str,
-) -> Result<Vec<super::QueryInCode>, String> {
+pub fn find_queries_in_code(code: &[u8], file_extension: &str) -> Result<Vec<QueryInCode>> {
     let (language, query_extractor): (tree_sitter::Language, NodeQueryExtractor) =
         match file_extension {
             "py" => (
@@ -40,34 +41,31 @@ pub fn find_queries_in_code(
                 tree_sitter_rust::language(),
                 rust::extract_query_string_from_node,
             ),
-            _ => panic!("{}", format!("File not supported {file_extension}")),
+            other => return Err(SqlShieldError::UnsupportedFileExtension(other.to_string())),
         };
 
     let mut parser = tree_sitter::Parser::new();
 
     parser
         .set_language(language)
-        .expect("Error loading grammar");
+        .expect("tree-sitter grammar incompatible with tree-sitter runtime");
 
     let parsed: Option<tree_sitter::Tree> = parser.parse(code, None);
 
-    let mut queries: Vec<super::QueryInCode> = Vec::new();
+    let mut queries: Vec<QueryInCode> = Vec::new();
 
     let dialect = sqlparser::dialect::GenericDialect {};
 
-    if let Some(tree) = parsed {
-        find_queries_in_ast(
-            &tree.root_node(),
-            code,
-            &query_extractor,
-            &dialect,
-            &mut queries,
-            None,
-        );
-        Ok(queries)
-    } else {
-        Err("Could not parse code".to_string())
-    }
+    let tree = parsed.ok_or(SqlShieldError::CodeParse)?;
+    find_queries_in_ast(
+        &tree.root_node(),
+        code,
+        &query_extractor,
+        &dialect,
+        &mut queries,
+        None,
+    );
+    Ok(queries)
 }
 
 fn find_queries_in_ast(
@@ -75,7 +73,7 @@ fn find_queries_in_ast(
     code: &[u8],
     query_extractor: &NodeQueryExtractor,
     dialect: &impl sqlparser::dialect::Dialect,
-    queries: &mut Vec<super::QueryInCode>,
+    queries: &mut Vec<QueryInCode>,
     verbose: Option<u8>,
 ) {
     let mut cursor = node.walk();
@@ -83,19 +81,13 @@ fn find_queries_in_ast(
     for child in node.children(&mut cursor) {
         match query_extractor(&child, code) {
             Some(string_content) => {
-                // ! Duct tape
-                if string_content.contains("REPLACE") {
-                    find_queries_in_ast(&child, code, query_extractor, dialect, queries, None)
-                }
-                // !
-
                 let query_at = child.start_position();
 
                 let statements = sqlparser::parser::Parser::parse_sql(dialect, &string_content);
 
                 match statements {
                     Ok(statements) => {
-                        queries.push(super::QueryInCode {
+                        queries.push(QueryInCode {
                             line: query_at.row + 1,
                             statements,
                         });

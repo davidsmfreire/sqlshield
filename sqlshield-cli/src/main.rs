@@ -15,12 +15,18 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let validation_errors = sqlshield::validate_files(
-        &args.directory.unwrap_or(std::path::PathBuf::from(".")),
-        &args
-            .schema
-            .unwrap_or(std::path::PathBuf::from("schema.sql")),
-    );
+    let directory = args.directory.unwrap_or(std::path::PathBuf::from("."));
+    let schema = args
+        .schema
+        .unwrap_or(std::path::PathBuf::from("schema.sql"));
+
+    let validation_errors = match sqlshield::validate_files(&directory, &schema) {
+        Ok(errors) => errors,
+        Err(err) => {
+            eprintln!("sqlshield: {err}");
+            std::process::exit(1);
+        }
+    };
 
     for error in &validation_errors {
         println!("{error}");

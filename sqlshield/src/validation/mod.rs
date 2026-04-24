@@ -1,3 +1,6 @@
+//! Validates parsed SQL statements against a schema: flags missing tables,
+//! missing columns, and projection mismatches across JOINs and CTEs.
+
 pub mod asserts;
 pub mod clauses;
 
@@ -132,8 +135,10 @@ fn validate_and_extract_subqueries<'a>(
                             derived_columns.insert(ident.value.as_str());
                         }
                         sqlparser::ast::Expr::CompoundIdentifier(idents) => {
-                            // ! is this correct?
-                            derived_columns.insert(idents.last().unwrap().value.as_str());
+                            // For `t.col`, the projected name is the last segment (`col`).
+                            if let Some(last) = idents.last() {
+                                derived_columns.insert(last.value.as_str());
+                            }
                         }
                         _ => {}
                     },
