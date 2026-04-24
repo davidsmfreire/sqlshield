@@ -305,20 +305,32 @@ fn walk_factor_for_derived<'a>(
     extras: &mut HashMap<&'a str, HashSet<&'a str>>,
     errors: &mut Vec<String>,
 ) {
-    if let TableFactor::Derived {
-        subquery, alias, ..
-    } = factor
-    {
-        let Some(alias) = alias.as_ref() else {
-            return;
-        };
+    match factor {
+        TableFactor::Derived {
+            subquery, alias, ..
+        } => {
+            let Some(alias) = alias.as_ref() else {
+                return;
+            };
 
-        // Recursive validation: uses its own fresh extras, so inner CTEs don't
-        // leak out. Inner errors bubble up to the outer error list.
-        errors.extend(validate_query_with_schema(subquery.as_ref(), schema));
+            // Recursive validation: uses its own fresh extras, so inner CTEs
+            // don't leak out. Inner errors bubble up to the outer error list.
+            errors.extend(validate_query_with_schema(subquery.as_ref(), schema));
 
-        let cols = project_columns(subquery.as_ref());
-        extras.insert(alias.name.value.as_str(), cols);
+            let cols = project_columns(subquery.as_ref());
+            extras.insert(alias.name.value.as_str(), cols);
+        }
+        // A parenthesized join group can contain derived tables that should
+        // still be exposed in the surrounding scope.
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => {
+            walk_factor_for_derived(&table_with_joins.relation, schema, extras, errors);
+            for join in &table_with_joins.joins {
+                walk_factor_for_derived(&join.relation, schema, extras, errors);
+            }
+        }
+        _ => {}
     }
 }
 

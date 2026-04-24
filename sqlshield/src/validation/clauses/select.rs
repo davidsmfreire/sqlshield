@@ -72,6 +72,60 @@ fn collect_projection_aliases(select: &Select) -> HashSet<&str> {
     out
 }
 
+/// Validate a single `TableFactor` from a FROM clause: check table
+/// existence, and recurse into NestedJoin so ON/USING and inner table
+/// existence are also covered.
+fn validate_from_factor(
+    factor: &TableFactor,
+    visible: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&str, HashSet<&str>>,
+    errors: &mut Vec<String>,
+) {
+    if let Some(name) = asserts::is_relation_in_schema(factor, schema, extras) {
+        errors.push(format!("Table `{name}` not found in schema nor subqueries"));
+    }
+    if let TableFactor::NestedJoin {
+        table_with_joins, ..
+    } = factor
+    {
+        validate_from_factor(&table_with_joins.relation, visible, schema, extras, errors);
+        for join in &table_with_joins.joins {
+            validate_from_factor(&join.relation, visible, schema, extras, errors);
+            validate_join_op(&join.join_operator, visible, schema, extras, errors);
+        }
+    }
+}
+
+/// Validate a join's ON / USING constraint columns against the outer
+/// visible relations.
+fn validate_join_op(
+    op: &JoinOperator,
+    visible: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&str, HashSet<&str>>,
+    errors: &mut Vec<String>,
+) {
+    let Some(constraint) = join_constraint(op) else {
+        return;
+    };
+    let no_aliases: HashSet<&str> = HashSet::new();
+    match constraint {
+        JoinConstraint::On(expr) => {
+            validate_expr_column_refs(expr, visible, schema, extras, &no_aliases, errors);
+        }
+        JoinConstraint::Using(cols) => {
+            for col in cols {
+                if let Some(err) = resolve_unqualified(col.value.as_str(), visible, schema, extras)
+                {
+                    errors.push(err);
+                }
+            }
+        }
+        JoinConstraint::Natural | JoinConstraint::None => {}
+    }
+}
+
 /// Borrow the `JoinConstraint` out of any `JoinOperator` that carries one.
 /// CrossJoin / CrossApply / OuterApply have no constraint.
 fn join_constraint(op: &JoinOperator) -> Option<&JoinConstraint> {
@@ -93,16 +147,30 @@ pub(crate) fn collect_visible_relations<'a>(
 ) -> Vec<VisibleRelation<'a>> {
     let mut out = Vec::new();
     for t in tables {
-        if let Some(r) = VisibleRelation::from_factor(&t.relation) {
-            out.push(r);
-        }
+        collect_from_factor(&t.relation, &mut out);
         for j in &t.joins {
-            if let Some(r) = VisibleRelation::from_factor(&j.relation) {
-                out.push(r);
-            }
+            collect_from_factor(&j.relation, &mut out);
         }
     }
     out
+}
+
+/// Recurse into `TableFactor::NestedJoin` so the relations inside a
+/// parenthesized join group still appear in the visible set.
+fn collect_from_factor<'a>(factor: &'a TableFactor, out: &mut Vec<VisibleRelation<'a>>) {
+    if let Some(r) = VisibleRelation::from_factor(factor) {
+        out.push(r);
+        return;
+    }
+    if let TableFactor::NestedJoin {
+        table_with_joins, ..
+    } = factor
+    {
+        collect_from_factor(&table_with_joins.relation, out);
+        for j in &table_with_joins.joins {
+            collect_from_factor(&j.relation, out);
+        }
+    }
 }
 
 /// Look up whether `col` exists in the column set for a relation (either in
@@ -357,51 +425,10 @@ impl ClauseValidation for Select {
         let no_aliases: HashSet<&str> = HashSet::new();
 
         for item in &select.from {
-            if let Some(relation_name) =
-                asserts::is_relation_in_schema(&item.relation, schema, extras)
-            {
-                errors.push(format!(
-                    "Table `{relation_name}` not found in schema nor subqueries"
-                ))
-            }
-
+            validate_from_factor(&item.relation, &visible, schema, extras, &mut errors);
             for join in &item.joins {
-                if let Some(relation_name) =
-                    asserts::is_relation_in_schema(&join.relation, schema, extras)
-                {
-                    errors.push(format!(
-                        "Table `{relation_name}` not found in schema nor subqueries"
-                    ))
-                }
-
-                // ON / USING constraint column checks.
-                if let Some(constraint) = join_constraint(&join.join_operator) {
-                    match constraint {
-                        JoinConstraint::On(expr) => {
-                            validate_expr_column_refs(
-                                expr,
-                                &visible,
-                                schema,
-                                extras,
-                                &no_aliases,
-                                &mut errors,
-                            );
-                        }
-                        JoinConstraint::Using(cols) => {
-                            for col in cols {
-                                if let Some(err) = resolve_unqualified(
-                                    col.value.as_str(),
-                                    &visible,
-                                    schema,
-                                    extras,
-                                ) {
-                                    errors.push(err);
-                                }
-                            }
-                        }
-                        JoinConstraint::Natural | JoinConstraint::None => {}
-                    }
-                }
+                validate_from_factor(&join.relation, &visible, schema, extras, &mut errors);
+                validate_join_op(&join.join_operator, &visible, schema, extras, &mut errors);
             }
         }
 
