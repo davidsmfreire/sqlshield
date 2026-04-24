@@ -27,6 +27,36 @@ static CODE_FILE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(r"\.({extensions})$")).expect("static regex built from known extensions")
 });
 
+/// Directory names that are pruned from the file walker by default. These
+/// hold generated artefacts, caches, and vendored code — scanning them
+/// produces noise without value.
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    "dist",
+    "build",
+    ".idea",
+    ".vscode",
+];
+
+fn is_ignored_dir(entry: &walkdir::DirEntry) -> bool {
+    if !entry.file_type().is_dir() {
+        return false;
+    }
+    entry
+        .file_name()
+        .to_str()
+        .is_some_and(|name| IGNORED_DIRS.contains(&name))
+}
+
 /// Validate a single SQL query against a schema using the [`Dialect::Generic`]
 /// parser. For dialect-specific parsing, see [`validate_query_with_dialect`].
 pub fn validate_query(query: &str, schema: &str) -> Result<Vec<String>> {
@@ -67,6 +97,7 @@ pub fn validate_files_with_dialect(
     // parsing + validation rather than directory traversal.
     let paths: Vec<std::path::PathBuf> = WalkDir::new(dir)
         .into_iter()
+        .filter_entry(|e| !is_ignored_dir(e))
         .filter_map(|e| e.ok())
         .filter_map(|entry| {
             let path = entry.into_path();
