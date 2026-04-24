@@ -9,7 +9,7 @@ members = [
 
 [workspace.package]
 version = "0.0.1"
-authors = ["David Freire <davidsmfreire@gmail.com>"]
+authors = ["David Freire <work@davidfrei.re>"]
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
