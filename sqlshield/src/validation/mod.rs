@@ -199,44 +199,38 @@ fn validate_set_expr<'a>(
         // body. Dispatch back to the DML validators so the inner statement
         // is checked and the surrounding CTEs (carried in `extras`) stay in
         // scope.
-        SetExpr::Insert(inner) => {
-            if let Statement::Insert {
-                table_name,
-                columns,
-                source,
-                ..
-            } = inner
-            {
-                errors.extend(clauses::insert::validate_insert(
-                    table_name, columns, schema,
-                ));
-                if let Some(source_query) = source {
-                    errors.extend(validate_query_with_scope(
-                        source_query.as_ref(),
-                        schema,
-                        extras,
-                    ));
-                }
-            }
-        }
-        SetExpr::Update(inner) => {
-            if let Statement::Update {
-                table,
-                assignments,
-                from,
-                selection,
-                ..
-            } = inner
-            {
-                errors.extend(clauses::update::validate_update(
-                    table,
-                    assignments,
-                    from.as_ref(),
-                    selection.as_ref(),
+        SetExpr::Insert(Statement::Insert {
+            table_name,
+            columns,
+            source,
+            ..
+        }) => {
+            errors.extend(clauses::insert::validate_insert(
+                table_name, columns, schema,
+            ));
+            if let Some(source_query) = source {
+                errors.extend(validate_query_with_scope(
+                    source_query.as_ref(),
                     schema,
                     extras,
                 ));
             }
+        }
+        SetExpr::Update(Statement::Update {
+            table,
+            assignments,
+            from,
+            selection,
+            ..
+        }) => {
+            errors.extend(clauses::update::validate_update(
+                table,
+                assignments,
+                from.as_ref(),
+                selection.as_ref(),
+                schema,
+                extras,
+            ));
         }
         _ => {}
     }

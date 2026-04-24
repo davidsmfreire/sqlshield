@@ -192,33 +192,12 @@ fn column_in_relation(
     None
 }
 
+/// Resolve an unqualified column reference against the visible relations.
+/// The error message names the specific table(s) the column was missing
+/// from when at least one visible relation is known to the schema; if no
+/// known relation contains this column, table-not-found errors emitted by
+/// the FROM walk already covered the situation, so we stay quiet.
 fn resolve_unqualified(
-    col: &str,
-    relations: &[VisibleRelation<'_>],
-    schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
-) -> Option<String> {
-    let mut any_known = false;
-    for rel in relations {
-        match column_in_relation(col, rel, schema, extras) {
-            Some(true) => return None,
-            Some(false) => any_known = true,
-            None => {}
-        }
-    }
-    if !any_known {
-        // None of the visible relations are in the schema: table-not-found
-        // errors from the FROM check already covered this; don't pile on.
-        return None;
-    }
-    Some(format!("Column `{col}` not found in any visible table"))
-}
-
-/// Like [`resolve_unqualified`] but carries a richer error message that
-/// names the specific table(s) the column was searched in. Used by the
-/// projection check, which historically reported "not found in table X"
-/// rather than the more generic "not found in any visible table".
-fn resolve_unqualified_for_projection(
     col: &str,
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
@@ -432,21 +411,17 @@ impl ClauseValidation for Select {
             }
         }
 
+        // Walk every projection expression with the same scope-aware visitor
+        // used by WHERE/HAVING/etc. — catches column refs inside function
+        // calls, CASE branches, CAST, arithmetic, and nested expressions
+        // that the old `direct_col_ref` shortcut silently skipped.
+        // Wildcard / QualifiedWildcard items have no column to validate.
         for item in &select.projection {
             let expr = match item {
                 SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
                 _ => continue,
             };
-            let (col_name, col_qualifier) = direct_col_ref(expr);
-            let Some(col_name) = col_name else { continue };
-
-            let err = match col_qualifier {
-                Some(qual) => resolve_qualified(qual, col_name, &visible, schema, extras),
-                None => resolve_unqualified_for_projection(col_name, &visible, schema, extras),
-            };
-            if let Some(err) = err {
-                errors.push(err);
-            }
+            validate_expr_column_refs(expr, &visible, schema, extras, &no_aliases, &mut errors);
         }
 
         // WHERE / HAVING / GROUP BY column references. `visible` and
@@ -473,20 +448,5 @@ impl ClauseValidation for Select {
         }
 
         errors
-    }
-}
-
-/// Pull a direct column reference out of an expression, ignoring wrappers
-/// we don't yet drill into (function calls, CASE, casts, etc.). Returns
-/// `(column, qualifier)` — the qualifier is the table-or-alias prefix in a
-/// 2-segment compound identifier.
-fn direct_col_ref(expr: &Expr) -> (Option<&str>, Option<&str>) {
-    match expr {
-        Expr::Identifier(identifier) => (Some(identifier.value.as_str()), None),
-        Expr::CompoundIdentifier(identifier) if identifier.len() == 2 => (
-            Some(identifier[1].value.as_str()),
-            Some(identifier[0].value.as_str()),
-        ),
-        _ => (None, None),
     }
 }
