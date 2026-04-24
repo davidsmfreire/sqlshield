@@ -146,6 +146,36 @@ fn resolve_unqualified(
     Some(format!("Column `{col}` not found in any visible table"))
 }
 
+/// Like [`resolve_unqualified`] but carries a richer error message that
+/// names the specific table(s) the column was searched in. Used by the
+/// projection check, which historically reported "not found in table X"
+/// rather than the more generic "not found in any visible table".
+fn resolve_unqualified_for_projection(
+    col: &str,
+    relations: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&str, HashSet<&str>>,
+) -> Option<String> {
+    let mut not_found_in: Vec<&str> = Vec::new();
+    for rel in relations {
+        match column_in_relation(col, rel, schema, extras) {
+            Some(true) => return None,
+            Some(false) => not_found_in.push(rel.name),
+            None => {}
+        }
+    }
+    if let [table] = not_found_in.as_slice() {
+        Some(format!("Column `{col}` not found in table `{table}`"))
+    } else if !not_found_in.is_empty() {
+        let names = not_found_in.join(",");
+        Some(format!(
+            "Column `{col}` not found in none of the tables: {names}"
+        ))
+    } else {
+        None
+    }
+}
+
 fn resolve_qualified(
     qualifier: &str,
     col: &str,
@@ -376,17 +406,19 @@ impl ClauseValidation for Select {
         }
 
         for item in &select.projection {
-            let result = is_select_item_in_relations(item, &select.from, schema, extras);
+            let expr = match item {
+                SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+                _ => continue,
+            };
+            let (col_name, col_qualifier) = direct_col_ref(expr);
+            let Some(col_name) = col_name else { continue };
 
-            if let Some((item_name, relations_not_found_in)) = result {
-                if let [table] = relations_not_found_in.as_slice() {
-                    errors.push(format!("Column `{item_name}` not found in table `{table}`"))
-                } else {
-                    let not_found_on = relations_not_found_in.join(",");
-                    errors.push(format!(
-                        "Column `{item_name}` not found in none of the tables: {not_found_on}"
-                    ))
-                }
+            let err = match col_qualifier {
+                Some(qual) => resolve_qualified(qual, col_name, &visible, schema, extras),
+                None => resolve_unqualified_for_projection(col_name, &visible, schema, extras),
+            };
+            if let Some(err) = err {
+                errors.push(err);
             }
         }
 
@@ -417,44 +449,10 @@ impl ClauseValidation for Select {
     }
 }
 
-fn is_select_item_in_relations<'a>(
-    item: &'a SelectItem,
-    tables: &'a [TableWithJoins],
-    schema: &'a schema::TablesAndColumns,
-    extras: &HashMap<&'a str, HashSet<&'a str>>,
-) -> Option<(&'a str, Vec<&'a str>)> {
-    let mut tables_searched_where_not_found: Vec<&str> = vec![];
-    let mut item_name: Option<&str> = None;
-
-    for relation in tables {
-        if let Some((col_name, table_name)) =
-            could_select_item_be_in_relation(item, &relation.relation, schema, extras)
-        {
-            tables_searched_where_not_found.push(table_name);
-            if item_name.is_none() {
-                item_name = Some(col_name);
-            }
-        }
-        for join in &relation.joins {
-            if let Some((col_name, table_name)) =
-                could_select_item_be_in_relation(item, &join.relation, schema, extras)
-            {
-                tables_searched_where_not_found.push(table_name);
-                if item_name.is_none() {
-                    item_name = Some(col_name);
-                }
-            }
-        }
-    }
-    if tables_searched_where_not_found.is_empty() {
-        return None;
-    }
-
-    Some((item_name?, tables_searched_where_not_found))
-}
-
 /// Pull a direct column reference out of an expression, ignoring wrappers
-/// we don't yet drill into (function calls, CASE, casts, etc.).
+/// we don't yet drill into (function calls, CASE, casts, etc.). Returns
+/// `(column, qualifier)` — the qualifier is the table-or-alias prefix in a
+/// 2-segment compound identifier.
 fn direct_col_ref(expr: &Expr) -> (Option<&str>, Option<&str>) {
     match expr {
         Expr::Identifier(identifier) => (Some(identifier.value.as_str()), None),
@@ -463,66 +461,5 @@ fn direct_col_ref(expr: &Expr) -> (Option<&str>, Option<&str>) {
             Some(identifier[0].value.as_str()),
         ),
         _ => (None, None),
-    }
-}
-
-fn could_select_item_be_in_relation<'a>(
-    item: &'a SelectItem,
-    table: &'a TableFactor,
-    schema: &'a schema::TablesAndColumns,
-    extras: &HashMap<&'a str, HashSet<&'a str>>,
-) -> Option<(&'a str, &'a str)> {
-    // returns item_name, table_name if item could be in table but is not
-
-    // `SELECT expr` and `SELECT expr AS alias` resolve the same underlying
-    // column reference — the alias only renames the output.
-    let (col_name, col_table_alias) = match item {
-        SelectItem::UnnamedExpr(expression)
-        | SelectItem::ExprWithAlias {
-            expr: expression, ..
-        } => direct_col_ref(expression),
-        _ => (None, None),
-    };
-
-    let (table_name, alias) = match table {
-        TableFactor::Table { name, alias, .. } => (
-            name.0
-                .last()
-                .expect("sqlparser guarantees ObjectName has ≥1 ident")
-                .value
-                .as_str(),
-            alias.as_ref(),
-        ),
-        TableFactor::Derived { alias, .. } => {
-            let alias_ref = alias.as_ref()?;
-            (alias_ref.name.value.as_str(), Some(alias_ref))
-        }
-        _ => return None,
-    };
-
-    let should_check = match (alias, col_table_alias) {
-        (None, None) => true,
-        (Some(table_alias), Some(col_alias)) => table_alias.name.value == col_alias,
-        _ => false,
-    };
-
-    if !should_check {
-        return None;
-    }
-
-    let col_name = col_name?;
-
-    let column_present = if let Some(cols) = schema.get(table_name) {
-        cols.contains(col_name)
-    } else if let Some(cols) = extras.get(table_name) {
-        cols.contains(col_name)
-    } else {
-        return None;
-    };
-
-    if column_present {
-        None
-    } else {
-        Some((col_name, table_name))
     }
 }
