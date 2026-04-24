@@ -285,6 +285,8 @@ fn validate_and_extract_subqueries<'a>(
         return;
     };
 
+    let recursive = with.recursive;
+
     for derived in &with.cte_tables {
         if let Some(derived_from) = &derived.from {
             if !schema.contains_key(derived_from.value.as_str()) {
@@ -296,10 +298,44 @@ fn validate_and_extract_subqueries<'a>(
             }
         }
 
-        errors.extend(validate_query_with_schema(derived.query.as_ref(), schema));
-
         let derived_name = derived.alias.name.value.as_str();
-        let derived_columns = project_columns(derived.query.as_ref());
+
+        // For WITH RECURSIVE, the CTE's own name must be visible inside its
+        // own body (so `WITH RECURSIVE t AS (SELECT 1 UNION SELECT x FROM t)`
+        // doesn't flag `t` as unknown). Pre-populate with the declared
+        // column list if one was given; otherwise fall back to the body's
+        // projected columns after validation.
+        if recursive {
+            let declared_cols: HashSet<&str> = derived
+                .alias
+                .columns
+                .iter()
+                .map(|c| c.value.as_str())
+                .collect();
+            extras.insert(derived_name, declared_cols);
+        }
+
+        // Validate the inner CTE body with the current `extras` (earlier
+        // CTEs + — for recursive CTEs — self) visible.
+        errors.extend(validate_query_with_scope(
+            derived.query.as_ref(),
+            schema,
+            extras,
+        ));
+
+        // Publish this CTE's output columns so later CTEs and the outer
+        // body can resolve against them. Explicit column lists
+        // `WITH t(a, b) AS (...)` override the body's projection names.
+        let derived_columns = if derived.alias.columns.is_empty() {
+            project_columns(derived.query.as_ref())
+        } else {
+            derived
+                .alias
+                .columns
+                .iter()
+                .map(|c| c.value.as_str())
+                .collect()
+        };
         extras.insert(derived_name, derived_columns);
     }
 }
