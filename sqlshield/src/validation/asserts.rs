@@ -1,27 +1,27 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+use crate::schema;
 
 pub fn is_relation_in_schema(
     relation: &sqlparser::ast::TableFactor,
-    tables: &HashSet<String>,
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&str, HashSet<&str>>,
 ) -> Option<String> {
-    // returns table_name if not in schema
-    match &relation {
+    match relation {
         sqlparser::ast::TableFactor::Table { name, .. } => {
             // TODO support table name with schema prefixed instead of using last ident
-            let table_name = name.0.last().unwrap();
-            let table_name_str = table_name.value.as_str();
-            if tables.contains(table_name_str) {
+            let table_name = name.0.last().unwrap().value.as_str();
+            if schema.contains_key(table_name) || extras.contains_key(table_name) {
                 return None;
             }
-            let name_full: String = name
+            let name_full = name
                 .0
                 .iter()
                 .map(|e| e.value.as_str())
                 .collect::<Vec<&str>>()
                 .join(".");
-            return Some(name_full);
+            Some(name_full)
         }
-        _ => {}
+        _ => None,
     }
-    None
 }

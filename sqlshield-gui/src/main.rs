@@ -18,10 +18,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 // println!("schema -> {}", ui.get_schema());
             }
 
-            let errors = match sqlshield::validate_query(
-                ui.get_queries().to_string(),
-                ui.get_schema().to_string(),
-            ) {
+            let queries = ui.get_queries();
+            let schema = ui.get_schema();
+            let errors = match sqlshield::validate_query(queries.as_str(), schema.as_str()) {
                 Ok(errors) => errors,
                 Err(err) => vec![err],
             };

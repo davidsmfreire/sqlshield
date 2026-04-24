@@ -37,8 +37,8 @@ fn validate_files(dir: String, schema_file_path: String) -> PyResult<Vec<PySqlVa
 }
 
 #[pyfunction]
-fn validate_query(query: String, schema: String) -> PyResult<Vec<String>> {
-    sqlshield_rs::validate_query(query, schema).map_err(|err| PyValueError::new_err(err))
+fn validate_query(query: &str, schema: &str) -> PyResult<Vec<String>> {
+    sqlshield_rs::validate_query(query, schema).map_err(PyValueError::new_err)
 }
 
 /// A Python module implemented in Rust.

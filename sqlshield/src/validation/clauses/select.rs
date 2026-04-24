@@ -2,28 +2,30 @@ use crate::{schema, validation::asserts};
 
 use super::ClauseValidation;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 impl ClauseValidation for sqlparser::ast::Select {
-    fn validate(&self, schema: &schema::TablesAndColumns) -> Vec<String> {
-        let tables_in_schema: HashSet<String> = HashSet::from_iter(schema.keys().cloned());
-
+    fn validate(
+        &self,
+        schema: &schema::TablesAndColumns,
+        extras: &HashMap<&str, HashSet<&str>>,
+    ) -> Vec<String> {
         let select = self;
         let mut errors = vec![];
 
         for item in &select.from {
-            let relation_name = asserts::is_relation_in_schema(&item.relation, &tables_in_schema);
-
-            if let Some(relation_name) = relation_name {
+            if let Some(relation_name) =
+                asserts::is_relation_in_schema(&item.relation, schema, extras)
+            {
                 errors.push(format!(
                     "Table `{relation_name}` not found in schema nor subqueries"
                 ))
             }
 
             for join in &item.joins {
-                let relation_name =
-                    asserts::is_relation_in_schema(&join.relation, &tables_in_schema);
-                if let Some(relation_name) = relation_name {
+                if let Some(relation_name) =
+                    asserts::is_relation_in_schema(&join.relation, schema, extras)
+                {
                     errors.push(format!(
                         "Table `{relation_name}` not found in schema nor subqueries"
                     ))
@@ -32,7 +34,7 @@ impl ClauseValidation for sqlparser::ast::Select {
         }
 
         for item in &select.projection {
-            let result = is_select_item_in_relations(item, &select.from, &schema);
+            let result = is_select_item_in_relations(item, &select.from, schema, extras);
 
             if let Some((item_name, relations_not_found_in)) = result {
                 if relations_not_found_in.len() == 1 {
@@ -50,25 +52,28 @@ impl ClauseValidation for sqlparser::ast::Select {
     }
 }
 
-fn is_select_item_in_relations(
-    item: &sqlparser::ast::SelectItem,
-    tables: &Vec<sqlparser::ast::TableWithJoins>,
-    schema: &schema::TablesAndColumns,
-) -> Option<(String, Vec<String>)> {
-    let mut tables_searched_where_not_found: Vec<String> = vec![];
-    let mut item_name: Option<String> = None;
+fn is_select_item_in_relations<'a>(
+    item: &'a sqlparser::ast::SelectItem,
+    tables: &'a [sqlparser::ast::TableWithJoins],
+    schema: &'a schema::TablesAndColumns,
+    extras: &HashMap<&'a str, HashSet<&'a str>>,
+) -> Option<(&'a str, Vec<&'a str>)> {
+    let mut tables_searched_where_not_found: Vec<&str> = vec![];
+    let mut item_name: Option<&str> = None;
 
     for relation in tables {
-        let result = could_select_item_be_in_relation(&item, &relation.relation, &schema);
-        if let Some((col_name, table_name)) = result {
+        if let Some((col_name, table_name)) =
+            could_select_item_be_in_relation(item, &relation.relation, schema, extras)
+        {
             tables_searched_where_not_found.push(table_name);
             if item_name.is_none() {
                 item_name = Some(col_name);
             }
         }
         for join in &relation.joins {
-            let result = could_select_item_be_in_relation(&item, &join.relation, &schema);
-            if let Some((col_name, table_name)) = result {
+            if let Some((col_name, table_name)) =
+                could_select_item_be_in_relation(item, &join.relation, schema, extras)
+            {
                 tables_searched_where_not_found.push(table_name);
                 if item_name.is_none() {
                     item_name = Some(col_name);
@@ -83,68 +88,59 @@ fn is_select_item_in_relations(
     Some((item_name?, tables_searched_where_not_found))
 }
 
-fn could_select_item_be_in_relation(
-    item: &sqlparser::ast::SelectItem,
-    table: &sqlparser::ast::TableFactor,
-    schema: &schema::TablesAndColumns,
-) -> Option<(String, String)> {
+fn could_select_item_be_in_relation<'a>(
+    item: &'a sqlparser::ast::SelectItem,
+    table: &'a sqlparser::ast::TableFactor,
+    schema: &'a schema::TablesAndColumns,
+    extras: &HashMap<&'a str, HashSet<&'a str>>,
+) -> Option<(&'a str, &'a str)> {
     // returns item_name, table_name if item could be in table but is not
 
-    let mut columns: Option<&HashSet<String>> = None;
-    let mut col_name: Option<String> = None;
-    let mut col_table_alias: Option<String> = None;
-    // let mut col_alias: Option<String> = None;
-
-    let mut table_name: Option<String> = None;
-
-    match &item {
-        sqlparser::ast::SelectItem::UnnamedExpr(expression) => {
-            match expression {
-                sqlparser::ast::Expr::Identifier(identifier) => {
-                    col_name = Some(identifier.value.clone());
-                }
-                sqlparser::ast::Expr::CompoundIdentifier(identifier) => {
-                    // for now only supports table alias
-                    if identifier.len() == 2 {
-                        col_table_alias = Some(identifier[0].value.clone());
-                        col_name = Some(identifier[1].value.clone());
-                    }
-                }
-                _ => {}
-            }
-        }
+    let (col_name, col_table_alias): (Option<&str>, Option<&str>) = match item {
+        sqlparser::ast::SelectItem::UnnamedExpr(expression) => match expression {
+            sqlparser::ast::Expr::Identifier(identifier) => (Some(identifier.value.as_str()), None),
+            sqlparser::ast::Expr::CompoundIdentifier(identifier) if identifier.len() == 2 => (
+                Some(identifier[1].value.as_str()),
+                Some(identifier[0].value.as_str()),
+            ),
+            _ => (None, None),
+        },
         // TODO: aliased columns
         // sqlparser::ast::SelectItem::ExprWithAlias { expr, alias } => {},
-        _ => {}
-    }
+        _ => (None, None),
+    };
 
-    match &table {
+    let (table_name, alias) = match table {
         sqlparser::ast::TableFactor::Table { name, alias, .. } => {
-            let name = &name.0.last().unwrap().value;
-
-            match (alias, col_table_alias) {
-                (None, None) => {
-                    columns = schema.get(name);
-                }
-                (None, Some(_)) => {}
-                (Some(_), None) => {}
-                (Some(alias), Some(col_table_alias)) => {
-                    if alias.name.value == col_table_alias {
-                        columns = schema.get(name);
-                    }
-                }
-            }
-            table_name = Some(name.clone());
+            (name.0.last().unwrap().value.as_str(), alias.as_ref())
         }
         // TODO Implement for others
-        _ => (),
+        _ => return None,
+    };
+
+    let should_check = match (alias, col_table_alias) {
+        (None, None) => true,
+        (Some(table_alias), Some(col_alias)) => table_alias.name.value == col_alias,
+        _ => false,
+    };
+
+    if !should_check {
+        return None;
     }
 
-    if let (Some(columns), Some(col_name)) = (columns, col_name) {
-        if !columns.contains(col_name.as_str()) {
-            return Some((col_name, table_name?));
-        }
-    }
+    let col_name = col_name?;
 
-    None
+    let column_present = if let Some(cols) = schema.get(table_name) {
+        cols.contains(col_name)
+    } else if let Some(cols) = extras.get(table_name) {
+        cols.contains(col_name)
+    } else {
+        return None;
+    };
+
+    if column_present {
+        None
+    } else {
+        Some((col_name, table_name))
+    }
 }
