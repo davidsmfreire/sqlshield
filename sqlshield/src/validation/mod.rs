@@ -4,7 +4,7 @@
 pub mod asserts;
 pub mod clauses;
 
-use sqlparser::ast::{SetExpr, Statement};
+use sqlparser::ast::{Expr, Query, SelectItem, SetExpr, Statement, TableFactor};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -83,7 +83,7 @@ pub fn validate_statements_with_schema(
 }
 
 pub fn validate_query_with_schema<'a>(
-    query: &'a sqlparser::ast::Query,
+    query: &'a Query,
     schema: &schema::TablesAndColumns,
 ) -> Vec<String> {
     let mut extras: HashMap<&'a str, HashSet<&'a str>> = HashMap::new();
@@ -93,12 +93,16 @@ pub fn validate_query_with_schema<'a>(
 
     if let SetExpr::Select(boxed) = query.body.as_ref() {
         let select = boxed.as_ref();
+
+        // Derived tables in FROM — recursively validate and expose their
+        // projections under their alias before dispatching to clause validators.
+        extract_derived_from_factors(select, schema, &mut extras, &mut errors);
+
         errors.append(&mut select.validate(schema, &extras));
 
         // ORDER BY lives on Query and resolves against the Select's scope.
         if !query.order_by.is_empty() {
-            let order_exprs: Vec<&sqlparser::ast::Expr> =
-                query.order_by.iter().map(|ob| &ob.expr).collect();
+            let order_exprs: Vec<&Expr> = query.order_by.iter().map(|ob| &ob.expr).collect();
             errors.extend(clauses::select::validate_exprs_in_select_scope(
                 &order_exprs,
                 select,
@@ -112,8 +116,73 @@ pub fn validate_query_with_schema<'a>(
     errors
 }
 
+/// Extract the set of column names that a `Query` projects (for use as the
+/// visible columns of a CTE or derived table).
+fn project_columns(query: &Query) -> HashSet<&str> {
+    let mut cols = HashSet::new();
+    if let SetExpr::Select(select_box) = query.body.as_ref() {
+        for item in &select_box.projection {
+            match item {
+                SelectItem::UnnamedExpr(expr) => match expr {
+                    Expr::Identifier(ident) => {
+                        cols.insert(ident.value.as_str());
+                    }
+                    Expr::CompoundIdentifier(idents) => {
+                        if let Some(last) = idents.last() {
+                            cols.insert(last.value.as_str());
+                        }
+                    }
+                    _ => {}
+                },
+                SelectItem::ExprWithAlias { alias, .. } => {
+                    cols.insert(alias.value.as_str());
+                }
+                _ => {}
+            }
+        }
+    }
+    cols
+}
+
+fn extract_derived_from_factors<'a>(
+    select: &'a sqlparser::ast::Select,
+    schema: &schema::TablesAndColumns,
+    extras: &mut HashMap<&'a str, HashSet<&'a str>>,
+    errors: &mut Vec<String>,
+) {
+    for table in &select.from {
+        walk_factor_for_derived(&table.relation, schema, extras, errors);
+        for join in &table.joins {
+            walk_factor_for_derived(&join.relation, schema, extras, errors);
+        }
+    }
+}
+
+fn walk_factor_for_derived<'a>(
+    factor: &'a TableFactor,
+    schema: &schema::TablesAndColumns,
+    extras: &mut HashMap<&'a str, HashSet<&'a str>>,
+    errors: &mut Vec<String>,
+) {
+    if let TableFactor::Derived {
+        subquery, alias, ..
+    } = factor
+    {
+        let Some(alias) = alias.as_ref() else {
+            return;
+        };
+
+        // Recursive validation: uses its own fresh extras, so inner CTEs don't
+        // leak out. Inner errors bubble up to the outer error list.
+        errors.extend(validate_query_with_schema(subquery.as_ref(), schema));
+
+        let cols = project_columns(subquery.as_ref());
+        extras.insert(alias.name.value.as_str(), cols);
+    }
+}
+
 fn validate_and_extract_subqueries<'a>(
-    query: &'a sqlparser::ast::Query,
+    query: &'a Query,
     schema: &schema::TablesAndColumns,
     extras: &mut HashMap<&'a str, HashSet<&'a str>>,
     errors: &mut Vec<String>,
@@ -133,36 +202,10 @@ fn validate_and_extract_subqueries<'a>(
             }
         }
 
-        let mut new_errors = validate_query_with_schema(derived.query.as_ref(), schema);
-        errors.append(&mut new_errors);
+        errors.extend(validate_query_with_schema(derived.query.as_ref(), schema));
 
         let derived_name = derived.alias.name.value.as_str();
-        let mut derived_columns: HashSet<&str> = HashSet::new();
-
-        if let SetExpr::Select(select_box) = derived.query.as_ref().body.as_ref() {
-            let select = select_box.as_ref();
-            for item in &select.projection {
-                match item {
-                    sqlparser::ast::SelectItem::UnnamedExpr(expr) => match expr {
-                        sqlparser::ast::Expr::Identifier(ident) => {
-                            derived_columns.insert(ident.value.as_str());
-                        }
-                        sqlparser::ast::Expr::CompoundIdentifier(idents) => {
-                            // For `t.col`, the projected name is the last segment (`col`).
-                            if let Some(last) = idents.last() {
-                                derived_columns.insert(last.value.as_str());
-                            }
-                        }
-                        _ => {}
-                    },
-                    sqlparser::ast::SelectItem::ExprWithAlias { alias, .. } => {
-                        derived_columns.insert(alias.value.as_str());
-                    }
-                    _ => {}
-                }
-            }
-        }
-
+        let derived_columns = project_columns(derived.query.as_ref());
         extras.insert(derived_name, derived_columns);
     }
 }

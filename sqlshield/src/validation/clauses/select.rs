@@ -30,6 +30,15 @@ impl<'a> VisibleRelation<'a> {
                 name: name.0.last()?.value.as_str(),
                 alias: alias.as_ref().map(|a| a.name.value.as_str()),
             }),
+            // A derived table `(SELECT …) alias` — its alias doubles as the
+            // relation name. Its projected columns are tracked in `extras`.
+            TableFactor::Derived { alias, .. } => {
+                let alias_ref = alias.as_ref()?;
+                Some(Self {
+                    name: alias_ref.name.value.as_str(),
+                    alias: None,
+                })
+            }
             _ => None,
         }
     }
@@ -290,7 +299,10 @@ fn could_select_item_be_in_relation<'a>(
                 .as_str(),
             alias.as_ref(),
         ),
-        // TODO Implement for others
+        TableFactor::Derived { alias, .. } => {
+            let alias_ref = alias.as_ref()?;
+            (alias_ref.name.value.as_str(), Some(alias_ref))
+        }
         _ => return None,
     };
 
