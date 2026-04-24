@@ -99,12 +99,14 @@ pub fn validate_statements_with_schema(
                 selection,
                 ..
             } => {
+                let empty: HashMap<&str, HashSet<&str>> = HashMap::new();
                 errors.extend(clauses::update::validate_update(
                     table,
                     assignments,
                     from.as_ref(),
                     selection.as_ref(),
                     schema,
+                    &empty,
                 ));
             }
             Statement::Delete {
@@ -113,11 +115,13 @@ pub fn validate_statements_with_schema(
                 selection,
                 ..
             } => {
+                let empty: HashMap<&str, HashSet<&str>> = HashMap::new();
                 errors.extend(clauses::delete::validate_delete(
                     from,
                     using.as_deref(),
                     selection.as_ref(),
                     schema,
+                    &empty,
                 ));
             }
             _ => {}
@@ -189,7 +193,50 @@ fn validate_set_expr<'a>(
             validate_set_expr(right.as_ref(), schema, extras, errors);
         }
         SetExpr::Query(inner) => {
-            errors.extend(validate_query_with_schema(inner.as_ref(), schema));
+            errors.extend(validate_query_with_scope(inner.as_ref(), schema, extras));
+        }
+        // `WITH … INSERT/UPDATE …`: sqlparser wraps the DML inside a Query
+        // body. Dispatch back to the DML validators so the inner statement
+        // is checked and the surrounding CTEs (carried in `extras`) stay in
+        // scope.
+        SetExpr::Insert(inner) => {
+            if let Statement::Insert {
+                table_name,
+                columns,
+                source,
+                ..
+            } = inner
+            {
+                errors.extend(clauses::insert::validate_insert(
+                    table_name, columns, schema,
+                ));
+                if let Some(source_query) = source {
+                    errors.extend(validate_query_with_scope(
+                        source_query.as_ref(),
+                        schema,
+                        extras,
+                    ));
+                }
+            }
+        }
+        SetExpr::Update(inner) => {
+            if let Statement::Update {
+                table,
+                assignments,
+                from,
+                selection,
+                ..
+            } = inner
+            {
+                errors.extend(clauses::update::validate_update(
+                    table,
+                    assignments,
+                    from.as_ref(),
+                    selection.as_ref(),
+                    schema,
+                    extras,
+                ));
+            }
         }
         _ => {}
     }

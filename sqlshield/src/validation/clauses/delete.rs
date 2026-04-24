@@ -9,14 +9,15 @@ use crate::validation::asserts;
 
 use super::select::{collect_visible_relations, validate_expr_column_refs};
 
-pub(crate) fn validate_delete(
-    from: &[TableWithJoins],
-    using: Option<&[TableWithJoins]>,
-    selection: Option<&Expr>,
+pub(crate) fn validate_delete<'a>(
+    from: &'a [TableWithJoins],
+    using: Option<&'a [TableWithJoins]>,
+    selection: Option<&'a Expr>,
     schema: &TablesAndColumns,
+    parent_extras: &HashMap<&'a str, HashSet<&'a str>>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    let extras: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let extras: HashMap<&str, HashSet<&str>> = parent_extras.clone();
 
     for table in from {
         if let Some(name) = asserts::is_relation_in_schema(&table.relation, schema, &extras) {

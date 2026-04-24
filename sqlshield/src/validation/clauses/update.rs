@@ -10,15 +10,16 @@ use crate::validation::asserts;
 use super::select::{collect_visible_relations, validate_expr_column_refs};
 use super::table_ref::display_name;
 
-pub(crate) fn validate_update(
-    table: &TableWithJoins,
-    assignments: &[Assignment],
-    from: Option<&TableWithJoins>,
-    selection: Option<&Expr>,
+pub(crate) fn validate_update<'a>(
+    table: &'a TableWithJoins,
+    assignments: &'a [Assignment],
+    from: Option<&'a TableWithJoins>,
+    selection: Option<&'a Expr>,
     schema: &TablesAndColumns,
+    parent_extras: &HashMap<&'a str, HashSet<&'a str>>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    let extras: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let extras: HashMap<&str, HashSet<&str>> = parent_extras.clone();
 
     // Target table must exist.
     if let Some(name) = asserts::is_relation_in_schema(&table.relation, schema, &extras) {
