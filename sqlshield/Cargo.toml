@@ -12,6 +12,7 @@ description = "Tools to validate raw sql queries declared in variables of arbitr
 
 [dependencies]
 colored = "2.1.0"
+rayon = "1.10"
 regex = "1.10.3"
 sqlparser = { version = "0.43.1", features = ["visitor"] }
 thiserror = "1.0"

@@ -15,7 +15,6 @@ pub mod validation;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use finder::QueryInCode;
 use regex::Regex;
 use validation::{validate_queries_in_code, validate_statements_with_schema, SqlValidationError};
 use walkdir::WalkDir;
@@ -58,37 +57,46 @@ pub fn validate_files_with_dialect(
     schema_file_path: &Path,
     dialect: Dialect,
 ) -> Result<Vec<SqlValidationError>> {
+    use rayon::prelude::*;
+
     let tables_and_columns: schema::TablesAndColumns =
         schema::load_schema_from_file(schema_file_path)?;
-    let parser_dialect = dialect.as_sqlparser();
 
-    let mut validation_errors: Vec<SqlValidationError> = Vec::new();
+    // Collect file paths first so rayon can parallelize cleanly over them.
+    // Filtering in one pass so the eventual parallel work is dominated by
+    // parsing + validation rather than directory traversal.
+    let paths: Vec<std::path::PathBuf> = WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter_map(|entry| {
+            let path = entry.into_path();
+            let path_str = path.to_str()?;
+            (path.is_file() && CODE_FILE_RE.is_match(path_str)).then_some(path)
+        })
+        .collect();
 
-    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
-        let file_path = entry.path();
-
-        let Some(path_str) = file_path.to_str() else {
-            continue;
-        };
-
-        if !(file_path.is_file() && CODE_FILE_RE.is_match(path_str)) {
-            continue;
-        }
-
-        let queries: Result<Vec<QueryInCode>> =
-            finder::find_queries_in_file_with_dialect(file_path, parser_dialect.as_ref());
-
-        if let Ok(queries) = queries {
-            let query_errors = validate_queries_in_code(&queries, &tables_and_columns);
-
-            for query_error in query_errors {
-                let validation_error =
-                    SqlValidationError::new(file_path, query_error.line, query_error.description);
-
-                validation_errors.push(validation_error);
-            }
-        }
-    }
+    // Per-file: extract queries then validate. Per-file parsing errors are
+    // swallowed (same as sequential behavior); only the top-level schema
+    // failure above aborts the whole run.
+    let validation_errors: Vec<SqlValidationError> = paths
+        .par_iter()
+        .flat_map_iter(|file_path| {
+            // Each worker builds its own boxed dialect — sqlparser's Dialect
+            // trait isn't Sync, but the Dialect enum is Copy.
+            let parser_dialect = dialect.as_sqlparser();
+            let Ok(queries) =
+                finder::find_queries_in_file_with_dialect(file_path, parser_dialect.as_ref())
+            else {
+                return Vec::new();
+            };
+            validate_queries_in_code(&queries, &tables_and_columns)
+                .into_iter()
+                .map(|query_error| {
+                    SqlValidationError::new(file_path, query_error.line, query_error.description)
+                })
+                .collect()
+        })
+        .collect();
 
     Ok(validation_errors)
 }
