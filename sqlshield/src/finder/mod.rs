@@ -7,6 +7,7 @@ use std::{fs, path::Path};
 
 use crate::error::{Result, SqlShieldError};
 
+#[derive(Debug)]
 pub struct QueryInCode {
     pub line: usize,
     pub statements: Vec<sqlparser::ast::Statement>,
