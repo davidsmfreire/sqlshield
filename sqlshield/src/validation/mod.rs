@@ -135,16 +135,12 @@ pub fn validate_query_with_schema<'a>(
 
     validate_and_extract_subqueries(query, schema, &mut extras, &mut errors);
 
+    validate_set_expr(query.body.as_ref(), schema, &extras, &mut errors);
+
+    // ORDER BY resolves against the outermost Select's scope. For set
+    // operations we can't pick one side — skip.
     if let SetExpr::Select(boxed) = query.body.as_ref() {
         let select = boxed.as_ref();
-
-        // Derived tables in FROM — recursively validate and expose their
-        // projections under their alias before dispatching to clause validators.
-        extract_derived_from_factors(select, schema, &mut extras, &mut errors);
-
-        errors.append(&mut select.validate(schema, &extras));
-
-        // ORDER BY lives on Query and resolves against the Select's scope.
         if !query.order_by.is_empty() {
             let order_exprs: Vec<&Expr> = query.order_by.iter().map(|ob| &ob.expr).collect();
             errors.extend(clauses::select::validate_exprs_in_select_scope(
@@ -159,30 +155,73 @@ pub fn validate_query_with_schema<'a>(
     errors
 }
 
+/// Walk a `SetExpr` (Select / SetOperation / Query / Values) recursively,
+/// validating each inner Select against `schema` plus any CTE-derived
+/// `extras` visible at this level. Derived-table scopes are cloned per
+/// branch so they don't leak between UNION arms.
+fn validate_set_expr<'a>(
+    body: &'a SetExpr,
+    schema: &schema::TablesAndColumns,
+    extras: &HashMap<&'a str, HashSet<&'a str>>,
+    errors: &mut Vec<String>,
+) {
+    match body {
+        SetExpr::Select(boxed) => {
+            let select = boxed.as_ref();
+            let mut local_extras = extras.clone();
+            extract_derived_from_factors(select, schema, &mut local_extras, errors);
+            errors.extend(select.validate(schema, &local_extras));
+        }
+        SetExpr::SetOperation { left, right, .. } => {
+            validate_set_expr(left.as_ref(), schema, extras, errors);
+            validate_set_expr(right.as_ref(), schema, extras, errors);
+        }
+        SetExpr::Query(inner) => {
+            errors.extend(validate_query_with_schema(inner.as_ref(), schema));
+        }
+        _ => {}
+    }
+}
+
 /// Extract the set of column names that a `Query` projects (for use as the
 /// visible columns of a CTE or derived table).
 fn project_columns(query: &Query) -> HashSet<&str> {
+    project_columns_of_body(query.body.as_ref())
+}
+
+fn project_columns_of_body(body: &SetExpr) -> HashSet<&str> {
     let mut cols = HashSet::new();
-    if let SetExpr::Select(select_box) = query.body.as_ref() {
-        for item in &select_box.projection {
-            match item {
-                SelectItem::UnnamedExpr(expr) => match expr {
-                    Expr::Identifier(ident) => {
-                        cols.insert(ident.value.as_str());
-                    }
-                    Expr::CompoundIdentifier(idents) => {
-                        if let Some(last) = idents.last() {
-                            cols.insert(last.value.as_str());
+    match body {
+        SetExpr::Select(select_box) => {
+            for item in &select_box.projection {
+                match item {
+                    SelectItem::UnnamedExpr(expr) => match expr {
+                        Expr::Identifier(ident) => {
+                            cols.insert(ident.value.as_str());
                         }
+                        Expr::CompoundIdentifier(idents) => {
+                            if let Some(last) = idents.last() {
+                                cols.insert(last.value.as_str());
+                            }
+                        }
+                        _ => {}
+                    },
+                    SelectItem::ExprWithAlias { alias, .. } => {
+                        cols.insert(alias.value.as_str());
                     }
                     _ => {}
-                },
-                SelectItem::ExprWithAlias { alias, .. } => {
-                    cols.insert(alias.value.as_str());
                 }
-                _ => {}
             }
         }
+        // Per SQL spec, the output column names of `A UNION B` are the left
+        // branch's names.
+        SetExpr::SetOperation { left, .. } => {
+            cols.extend(project_columns_of_body(left.as_ref()));
+        }
+        SetExpr::Query(inner) => {
+            cols.extend(project_columns(inner.as_ref()));
+        }
+        _ => {}
     }
     cols
 }
