@@ -17,7 +17,7 @@ pub fn extract_query_string_from_node(node: &tree_sitter::Node, code: &[u8]) -> 
         if var_component.kind() == "interpolation" {
             // replace any interpolation in fstring with 1 will always produce valid parsable sql
             // when they are inplace of static values
-            content_as_string.push_str("1");
+            content_as_string.push('1');
         }
     }
 
@@ -26,5 +26,5 @@ pub fn extract_query_string_from_node(node: &tree_sitter::Node, code: &[u8]) -> 
     let re = Regex::new(r"\{.*?\}").unwrap();
     content_as_string = re.replace_all(&content_as_string, "1").to_string();
 
-    return Some(content_as_string);
+    Some(content_as_string)
 }

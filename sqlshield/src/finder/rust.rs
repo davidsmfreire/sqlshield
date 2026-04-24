@@ -19,5 +19,5 @@ pub fn extract_query_string_from_node(node: &tree_sitter::Node, code: &[u8]) -> 
         .replace_all(string_content_without_commas, "1")
         .to_string();
 
-    return Some(clean_string_content);
+    Some(clean_string_content)
 }

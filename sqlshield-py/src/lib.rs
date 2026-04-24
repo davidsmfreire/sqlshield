@@ -31,7 +31,7 @@ fn validate_files(dir: String, schema_file_path: String) -> PyResult<Vec<PySqlVa
     Ok(
         sqlshield_rs::validate_files(&PathBuf::from(dir), &PathBuf::from(schema_file_path))
             .into_iter()
-            .map(|err| PySqlValidationError(err))
+            .map(PySqlValidationError)
             .collect::<Vec<PySqlValidationError>>(),
     )
 }

@@ -16,7 +16,7 @@ pub fn find_queries_in_file(file_path: &Path) -> Result<Vec<super::QueryInCode>,
     let code = fs::read(file_path);
     let file_extension = &file_path.extension().unwrap().to_string_lossy();
     match code {
-        Ok(code) => find_queries_in_code(&code, &file_extension),
+        Ok(code) => find_queries_in_code(&code, file_extension),
         Err(err) => Err(format!(
             "Could not open {:?} due to error: {err}",
             file_path
@@ -31,7 +31,7 @@ pub fn find_queries_in_code(
     file_extension: &str,
 ) -> Result<Vec<super::QueryInCode>, String> {
     let (language, query_extractor): (tree_sitter::Language, NodeQueryExtractor) =
-        match file_extension.as_ref() {
+        match file_extension {
             "py" => (
                 tree_sitter_python::language(),
                 python::extract_query_string_from_node,
@@ -58,15 +58,15 @@ pub fn find_queries_in_code(
     if let Some(tree) = parsed {
         find_queries_in_ast(
             &tree.root_node(),
-            &code,
+            code,
             &query_extractor,
             &dialect,
             &mut queries,
             None,
         );
-        return Ok(queries);
+        Ok(queries)
     } else {
-        return Err("Could not parse code".to_string());
+        Err("Could not parse code".to_string())
     }
 }
 
@@ -84,7 +84,7 @@ fn find_queries_in_ast(
         match query_extractor(&child, code) {
             Some(string_content) => {
                 // ! Duct tape
-                if string_content.find("REPLACE").is_some() {
+                if string_content.contains("REPLACE") {
                     find_queries_in_ast(&child, code, query_extractor, dialect, queries, None)
                 }
                 // !

@@ -2,7 +2,7 @@ pub mod finder;
 pub mod schema;
 pub mod validation;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use finder::QueryInCode;
 use regex::Regex;
@@ -17,21 +17,18 @@ pub fn validate_query(query: &str, schema: &str) -> Result<Vec<String>, String> 
         Err(err) => return Err(err.to_string()),
     };
 
-    let loaded_schema = match schema::load_schema(schema.as_bytes(), "sql") {
-        Ok(loaded_schema) => loaded_schema,
-        Err(err) => return Err(err),
-    };
+    let loaded_schema = schema::load_schema(schema.as_bytes(), "sql")?;
 
     Ok(validate_statements_with_schema(&statements, &loaded_schema))
 }
 
-pub fn validate_files(dir: &PathBuf, schema_file_path: &PathBuf) -> Vec<SqlValidationError> {
+pub fn validate_files(dir: &Path, schema_file_path: &Path) -> Vec<SqlValidationError> {
     let supported_code_file_extensions: String = finder::SUPPORTED_CODE_FILE_EXTENSIONS.join("|");
 
     let code_file_regex = Regex::new(&format!(r"\.({supported_code_file_extensions})$")).unwrap();
 
     let tables_and_columns: schema::TablesAndColumns =
-        schema::load_schema_from_file(&schema_file_path).unwrap();
+        schema::load_schema_from_file(schema_file_path).unwrap();
 
     let mut validation_errors: Vec<SqlValidationError> = Vec::new();
 
@@ -58,5 +55,5 @@ pub fn validate_files(dir: &PathBuf, schema_file_path: &PathBuf) -> Vec<SqlValid
         }
     }
 
-    return validation_errors;
+    validation_errors
 }

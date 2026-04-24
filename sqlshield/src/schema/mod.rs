@@ -22,7 +22,7 @@ pub fn load_schema_from_file(file_path: &Path) -> Result<TablesAndColumns, Strin
 }
 
 pub fn load_schema(schema: &[u8], schema_type: &str) -> Result<TablesAndColumns, String> {
-    match schema_type.as_ref() {
+    match schema_type {
         "sql" => sql::load_schema(schema),
         _ => panic!("{}", format!("Schema type not supported {schema_type}")),
     }

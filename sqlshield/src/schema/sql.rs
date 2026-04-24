@@ -12,18 +12,15 @@ pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns, String> {
 
     let mut tables: HashMap<String, HashSet<String>> = HashMap::new();
     for statement in statements {
-        match statement {
-            Statement::CreateTable { columns, name, .. } => {
-                // ! Ignoring schema, by getting last ident only gets table name
-                let last_ident = name.0.last().unwrap();
-                let columns_set: HashSet<String> =
-                    HashSet::from_iter(columns.iter().map(|e| e.name.value.clone()));
-                tables.insert(last_ident.value.clone(), columns_set);
-            }
-            _ => {}
+        if let Statement::CreateTable { columns, name, .. } = statement {
+            // ! Ignoring schema, by getting last ident only gets table name
+            let last_ident = name.0.last().unwrap();
+            let columns_set: HashSet<String> =
+                HashSet::from_iter(columns.iter().map(|e| e.name.value.clone()));
+            tables.insert(last_ident.value.clone(), columns_set);
         }
     }
-    return Ok(tables);
+    Ok(tables)
 }
 
 #[cfg(test)]
@@ -55,7 +52,7 @@ mod tests {
             ),
         ]);
 
-        let result = load_schema(&schema.as_bytes()).unwrap();
+        let result = load_schema(schema.as_bytes()).unwrap();
 
         assert_eq!(result, expected_result);
     }

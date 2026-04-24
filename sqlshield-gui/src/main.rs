@@ -1,5 +1,3 @@
-use sqlshield;
-
 slint::include_modules!();
 use std::rc::Rc;
 
