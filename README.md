@@ -154,6 +154,10 @@ A first-party VS Code extension lives at
 [`editors/vscode/`](editors/vscode/README.md) — it spawns `sqlshield-lsp`
 over stdio and forwards diagnostics as you type.
 
+A Zed extension is published separately at
+[`davidsmfreire/sqlshield-zed`](https://github.com/davidsmfreire/sqlshield-zed)
+and wraps the same `sqlshield-lsp` binary.
+
 ## pre-commit
 
 sqlshield ships a [pre-commit](https://pre-commit.com/) hook so it can

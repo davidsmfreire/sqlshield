@@ -1,7 +1,14 @@
 .venv
 /target
 **/target/
+/dist
 .vscode
+
+# Local VSIX build artifacts (see `make vscode-vsix`)
+editors/vscode/server/
+editors/vscode/out/
+editors/vscode/node_modules/
+editors/vscode/*.vsix
 
 # Python
 __pycache__/
@@ -18,3 +25,4 @@ Thumbs.db
 # Env
 .env
 .env.local
+post.txt
