@@ -1,0 +1,103 @@
+name: lsp-release
+
+# Builds prebuilt `sqlshield-lsp` binaries and attaches them to the
+# matching `sqlshield-lsp-vX.Y.Z` GitHub Release. The Zed extension's
+# download fallback expects asset names of the form
+# `sqlshield-lsp-{rust-target}.{tar.gz|zip}`.
+
+on:
+  push:
+    tags: ['sqlshield-lsp-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to attach assets to (e.g. sqlshield-lsp-v0.0.2)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target.rust }})
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { runner: ubuntu-latest,  rust: x86_64-unknown-linux-gnu,    use_cross: false }
+          - { runner: ubuntu-latest,  rust: aarch64-unknown-linux-gnu,   use_cross: true }
+          - { runner: macos-14,       rust: aarch64-apple-darwin,        use_cross: false }
+          - { runner: macos-14,       rust: x86_64-apple-darwin,         use_cross: false }
+          - { runner: windows-latest, rust: x86_64-pc-windows-msvc,      use_cross: false }
+          - { runner: windows-latest, rust: aarch64-pc-windows-msvc,     use_cross: false }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Add rust target
+        shell: bash
+        run: rustup target add ${{ matrix.target.rust }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lsp-release-${{ matrix.target.rust }}
+
+      - name: Install cross
+        if: matrix.target.use_cross
+        run: cargo install cross --locked
+
+      - name: Build (cross)
+        if: matrix.target.use_cross
+        run: cross build -p sqlshield-lsp --release --target ${{ matrix.target.rust }}
+
+      - name: Build (native)
+        if: ${{ !matrix.target.use_cross }}
+        run: cargo build -p sqlshield-lsp --release --target ${{ matrix.target.rust }}
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          target=${{ matrix.target.rust }}
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp target/$target/release/sqlshield-lsp.exe sqlshield-lsp.exe
+            7z a -tzip dist/sqlshield-lsp-$target.zip sqlshield-lsp.exe
+          else
+            cp target/$target/release/sqlshield-lsp sqlshield-lsp
+            chmod +x sqlshield-lsp
+            tar -czf dist/sqlshield-lsp-$target.tar.gz sqlshield-lsp
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sqlshield-lsp-${{ matrix.target.rust }}
+          path: dist/*
+          if-no-files-found: error
+
+  upload:
+    name: upload assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: sqlshield-lsp-*
+          merge-multiple: true
+
+      - name: Compute release tag
+        id: tag
+        run: |
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.ref }}
+          files: dist/*
+          fail_on_unmatched_files: true
