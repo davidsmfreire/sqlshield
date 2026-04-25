@@ -44,8 +44,8 @@ fn validate_query(query: &str, schema: &str) -> PyResult<Vec<String>> {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn sqlshield(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<PySqlValidationError>().unwrap();
+fn sqlshield(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PySqlValidationError>()?;
     m.add_function(wrap_pyfunction!(validate_files, m)?)?;
     m.add_function(wrap_pyfunction!(validate_query, m)?)?;
     Ok(())
