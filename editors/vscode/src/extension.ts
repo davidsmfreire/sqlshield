@@ -45,6 +45,11 @@ async function start(_context: ExtensionContext): Promise<void> {
       { scheme: "file", language: "sql" },
       { scheme: "file", language: "python" },
       { scheme: "file", language: "rust" },
+      { scheme: "file", language: "go" },
+      { scheme: "file", language: "javascript" },
+      { scheme: "file", language: "javascriptreact" },
+      { scheme: "file", language: "typescript" },
+      { scheme: "file", language: "typescriptreact" },
     ],
     synchronize: {
       fileEvents: workspace.createFileSystemWatcher("**/.sqlshield.toml"),

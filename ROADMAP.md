@@ -18,8 +18,13 @@
 - Output formats: text + JSON; split exit codes; `--stdin` mode.
 - `.sqlshield.toml` configuration with CLI override layering.
 - Parallel file walker (rayon) with default ignore list.
+- Language extractors: `.py`, `.rs`, `.go`, `.js`, `.ts`, `.tsx` —
+  string literals, raw / template strings, and language-specific
+  placeholder forms (Python f-strings / `.format()`, Go `fmt` verbs,
+  JS template substitutions).
 - Language Server (`sqlshield-lsp`) for inline editor diagnostics
-  in `.py` / `.rs` / `.sql`; auto-reload on schema-file changes.
+  across every supported source extension; auto-reload on schema-file
+  changes.
 - First-party VS Code extension (`editors/vscode`) wrapping
   `sqlshield-lsp` over stdio.
 - Live database introspection (`sqlshield-introspect`, exposed via
@@ -32,7 +37,7 @@
 - **MySQL live introspection** — pending: `mysql_common` uses unstable
   Rust features that haven't reached the project's pinned toolchain.
   A toolchain bump or a different sync driver would unblock this.
-- **More language extractors** — Go, TypeScript, Java string literals.
+- **More language extractors** — Java, C#, PHP, Ruby string literals.
   Each is a small `finder/<lang>.rs` module + tree-sitter grammar.
 
 ## Not planned

@@ -256,7 +256,7 @@ fn compute_diagnostics(text: &str, file_ext: &str, state: &LoadedState) -> Vec<D
                 }
             }
         }
-        "py" | "rs" => {
+        "py" | "rs" | "go" | "ts" | "tsx" | "js" => {
             let dialect = state.dialect.as_sqlparser();
             match sqlshield::finder::find_queries_in_code_with_dialect(
                 text.as_bytes(),

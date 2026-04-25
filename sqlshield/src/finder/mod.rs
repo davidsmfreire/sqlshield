@@ -1,5 +1,7 @@
 //! Locates SQL strings inside source files by walking a tree-sitter AST.
 
+mod go;
+mod javascript;
 mod python;
 mod rust;
 
@@ -13,7 +15,7 @@ pub struct QueryInCode {
     pub statements: Vec<sqlparser::ast::Statement>,
 }
 
-pub const SUPPORTED_CODE_FILE_EXTENSIONS: [&str; 2] = ["py", "rs"];
+pub const SUPPORTED_CODE_FILE_EXTENSIONS: [&str; 6] = ["py", "rs", "go", "ts", "tsx", "js"];
 
 pub fn find_queries_in_file(file_path: &Path) -> Result<Vec<QueryInCode>> {
     let dialect = sqlparser::dialect::GenericDialect {};
@@ -58,6 +60,25 @@ pub fn find_queries_in_code_with_dialect(
             "rs" => (
                 tree_sitter_rust::language(),
                 rust::extract_query_string_from_node,
+            ),
+            "go" => (
+                tree_sitter_go::language(),
+                go::extract_query_string_from_node,
+            ),
+            "js" => (
+                tree_sitter_javascript::language(),
+                javascript::extract_query_string_from_node,
+            ),
+            // TypeScript and TSX share node kinds with JavaScript for the
+            // string-literal shapes we care about, so the extractor is the
+            // same; only the grammar changes.
+            "ts" => (
+                tree_sitter_typescript::language_typescript(),
+                javascript::extract_query_string_from_node,
+            ),
+            "tsx" => (
+                tree_sitter_typescript::language_tsx(),
+                javascript::extract_query_string_from_node,
             ),
             other => return Err(SqlShieldError::UnsupportedFileExtension(other.to_string())),
         };
