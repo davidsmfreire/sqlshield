@@ -8,7 +8,7 @@ sqlshield is pre-1.0; only the most recent release receives security fixes.
 
 Please **do not** file a public GitHub issue for security problems.
 
-Email the maintainer at **work@davidfrei.re** with:
+Email the maintainer at **dev@davidfrei.re** with:
 
 - a description of the issue,
 - steps to reproduce (input SQL / schema / source file if applicable),
