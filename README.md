@@ -154,6 +154,28 @@ A first-party VS Code extension lives at
 [`editors/vscode/`](editors/vscode/README.md) — it spawns `sqlshield-lsp`
 over stdio and forwards diagnostics as you type.
 
+## pre-commit
+
+sqlshield ships a [pre-commit](https://pre-commit.com/) hook so it can
+gate every commit alongside your other linters. Add it to
+`.pre-commit-config.yaml`:
+
+```yaml
+- repo: https://github.com/davidsmfreire/sqlshield
+  rev: sqlshield-cli-v0.0.2  # pin to a tagged release
+  hooks:
+    - id: sqlshield
+```
+
+`pass_filenames: false` is hard-coded in the hook definition because
+sqlshield walks the directory itself (driven by `.sqlshield.toml` or its
+defaults) — file-by-file invocation isn't supported. The hook still
+runs only when files matching `\.(py|rs|go|js|ts|tsx|sql)$` change.
+
+The hook uses `language: rust`, so pre-commit's first run compiles the
+CLI from source via `cargo install`. Subsequent runs reuse the cached
+binary.
+
 ## Python integration
 
 [`sqlshield-py`](sqlshield-py/) exposes `validate_query` and

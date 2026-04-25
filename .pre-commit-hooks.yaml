@@ -1,0 +1,7 @@
+- id: sqlshield
+  name: sqlshield
+  description: Schema-aware SQL linter for embedded queries in Python, Rust, Go, and JavaScript / TypeScript source files.
+  entry: sqlshield
+  language: rust
+  pass_filenames: false
+  files: \.(py|rs|go|js|ts|tsx|sql)$

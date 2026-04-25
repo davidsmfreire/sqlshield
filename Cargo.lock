@@ -1389,6 +1389,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlshield-precommit"
+version = "0.0.2"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "sqlshield",
+ "sqlshield-introspect",
+ "toml",
+]
+
+[[package]]
 name = "sqlshield-py"
 version = "0.0.2"
 dependencies = [

@@ -19,3 +19,33 @@ repository = "https://github.com/davidsmfreire/sqlshield"
 [workspace.dependencies]
 sqlshield = { version = "0.0.2", path = "sqlshield" }
 sqlshield-introspect = { version = "0.0.2", path = "sqlshield-introspect" }
+
+# Root package exists solely so `cargo install --path .` (used by
+# pre-commit's `language: rust`) succeeds against this workspace. Not
+# published; mirrors `sqlshield-cli` and ships the same `sqlshield` bin.
+[package]
+name = "sqlshield-precommit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "pre-commit shim that installs the sqlshield CLI from this workspace root"
+publish = false
+
+[[bin]]
+name = "sqlshield"
+path = "sqlshield-cli/src/main.rs"
+
+[features]
+default = ["introspect"]
+introspect = ["dep:sqlshield-introspect"]
+
+[dependencies]
+clap = { version = "4.4.18", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlshield = { workspace = true }
+sqlshield-introspect = { workspace = true, optional = true }
+toml = "0.8"
