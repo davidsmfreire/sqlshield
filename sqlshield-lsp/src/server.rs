@@ -12,15 +12,15 @@ use sqlshield::Dialect;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
-    Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
+    InitializedParams, MessageType, Position, Range, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 use tracing::{debug, error, info, warn};
 
-use crate::config::{self, ServerConfig};
+use crate::config::{self, EditorSettings, ServerConfig};
 
 /// Per-request loaded state: the parsed schema plus the chosen dialect.
 /// `schema_mtime` is captured at load time so the server can detect when the
@@ -39,6 +39,9 @@ pub struct Backend {
     /// Workspace root captured at `initialize` time; needed so reloads can
     /// re-discover `.sqlshield.toml` after the schema file changes.
     root_dir: RwLock<Option<PathBuf>>,
+    /// Editor-supplied settings (VS Code `sqlshield.*`). Takes precedence
+    /// over `.sqlshield.toml` per-field.
+    editor_settings: RwLock<EditorSettings>,
 }
 
 impl Backend {
@@ -48,17 +51,25 @@ impl Backend {
             documents: DashMap::new(),
             state: RwLock::new(None),
             root_dir: RwLock::new(None),
+            editor_settings: RwLock::new(EditorSettings::default()),
+        }
+    }
+
+    async fn reload(&self) {
+        let root = self.root_dir.read().await.clone();
+        if let Some(root) = root {
+            self.load_state_from_dir(&root).await;
         }
     }
 
     async fn load_state_from_dir(&self, dir: &Path) {
         *self.root_dir.write().await = Some(dir.to_path_buf());
 
-        let cfg = match config::discover(dir) {
+        let editor = self.editor_settings.read().await.clone();
+        let cfg = match config::resolve(dir, &editor) {
             Ok(cfg) => cfg,
             Err(err) => {
-                self.log_error(format!(".sqlshield.toml problem: {err}"))
-                    .await;
+                self.log_error(format!("config problem: {err}")).await;
                 ServerConfig::default()
             }
         };
@@ -121,11 +132,8 @@ impl Backend {
         if !needs_reload {
             return;
         }
-        let root = self.root_dir.read().await.clone();
-        if let Some(root) = root {
-            self.log_info("schema file changed — reloading").await;
-            self.load_state_from_dir(&root).await;
-        }
+        self.log_info("schema file changed — reloading").await;
+        self.reload().await;
     }
 
     async fn validate_and_publish(&self, uri: Url, text: &str) {
@@ -164,6 +172,12 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> jsonrpc::Result<InitializeResult> {
+        // Editor settings forwarded by the client at startup. Stored
+        // before the first config resolve so they win over .sqlshield.toml.
+        if let Some(opts) = params.initialization_options.as_ref() {
+            *self.editor_settings.write().await = EditorSettings::from_value(opts);
+        }
+
         // Pick the first workspace root (or the legacy root_uri) as the base
         // for config discovery.
         let root = params
@@ -226,6 +240,25 @@ impl LanguageServer for Backend {
         self.documents.remove(&uri);
         // Clear the client-side diagnostic list on close.
         self.client.publish_diagnostics(uri, vec![], None).await;
+    }
+
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let new_settings = EditorSettings::from_change_notification(&params.settings);
+        *self.editor_settings.write().await = new_settings;
+        self.log_info("editor configuration changed — reloading")
+            .await;
+        self.reload().await;
+
+        // Re-validate every open document so existing diagnostics reflect
+        // the new schema/dialect immediately.
+        let snapshots: Vec<(Url, String)> = self
+            .documents
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        for (uri, text) in snapshots {
+            self.validate_and_publish(uri, &text).await;
+        }
     }
 }
 

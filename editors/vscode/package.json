@@ -43,8 +43,33 @@
       "properties": {
         "sqlshield.serverPath": {
           "type": "string",
-          "default": "sqlshield-lsp",
-          "description": "Path to the sqlshield-lsp binary. Defaults to 'sqlshield-lsp' on PATH."
+          "default": "",
+          "description": "Path to the sqlshield-lsp binary. Leave blank to use the binary bundled with this extension; falls back to 'sqlshield-lsp' on PATH."
+        },
+        "sqlshield.schema": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the schema SQL file (relative to the workspace root or absolute). Overrides 'schema' in .sqlshield.toml. Leave blank to use .sqlshield.toml or the default 'schema.sql'."
+        },
+        "sqlshield.dialect": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "generic",
+            "postgres",
+            "mysql",
+            "sqlite",
+            "mssql",
+            "snowflake",
+            "bigquery",
+            "redshift",
+            "clickhouse",
+            "duckdb",
+            "hive",
+            "ansi"
+          ],
+          "description": "SQL dialect for parsing. Overrides 'dialect' in .sqlshield.toml. Leave blank to use .sqlshield.toml or the default ('generic')."
         },
         "sqlshield.trace.server": {
           "type": "string",
