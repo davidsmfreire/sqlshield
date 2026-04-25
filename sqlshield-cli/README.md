@@ -1,8 +1,9 @@
 # sqlshield-cli
 
 Command-line linter for [sqlshield](https://github.com/davidsmfreire/sqlshield) —
-validates raw SQL strings embedded in Python and Rust source files
-against a declared schema, without touching a database.
+validates raw SQL strings embedded in Python, Rust, Go, and
+JavaScript / TypeScript source files against a declared schema (or a
+live Postgres / SQLite database).
 
 ## Install
 
@@ -23,7 +24,13 @@ sqlshield --directory src --schema schema.sql
 sqlshield [OPTIONS]
 
   -d, --directory <DIRECTORY>  Default: "."
-  -s, --schema    <SCHEMA>     Default: "schema.sql"
+  -s, --schema    <SCHEMA>     Default: "schema.sql".
+                               Mutually exclusive with --db-url.
+      --db-url    <URL>        Read schema from a live database instead
+                               of a file. Examples:
+                                 postgres://user:pass@localhost/mydb
+                                 sqlite:///abs/path/to/db.sqlite
+                                 ./relative.sqlite
       --dialect   <DIALECT>    generic | postgres | mysql | sqlite |
                                mssql | snowflake | bigquery | redshift |
                                clickhouse | duckdb | hive | ansi
@@ -46,6 +53,8 @@ for full details.
 schema = "db/schema.sql"
 directory = "src"
 dialect = "postgres"
+# Optional: introspect a running DB instead of reading schema.sql
+# db_url = "postgres://user:pass@localhost/mydb"
 ```
 
 ### Exit codes

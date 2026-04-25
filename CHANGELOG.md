@@ -16,6 +16,23 @@ From the first tagged release onward, this file is maintained by
 - CI matrix across ubuntu/macos/windows with fmt + clippy + cargo-deny gates.
 - `dependabot`, `release-plz`, `cargo-deny`, and `CHANGELOG.md` infrastructure.
 - MSRV declared as 1.80 (earliest version supporting `std::sync::LazyLock`).
+- Go SQL extractor (`finder/go.rs`): raw / interpreted string literals
+  and `fmt.Sprintf`-style verbs.
+- JavaScript / TypeScript SQL extractor (`finder/javascript.rs`):
+  single-, double-, and template-string literals across `.js`, `.ts`,
+  and `.tsx`; `${…}` substitutions stripped before parsing.
+- `MERGE INTO … USING … ON … WHEN [NOT] MATCHED` validation
+  (`validation/clauses/merge.rs`).
+- Postgres-aware identifier folding (`schema::sql::fold_ident`):
+  unquoted identifiers fold to lower case, quoted identifiers preserve
+  case. Other dialects keep ASCII case-insensitive matching.
+- `sqlshield-introspect` crate: live schema reader for Postgres and
+  SQLite. Wired into the CLI as `--db-url` (and `db_url` in
+  `.sqlshield.toml`); mutually exclusive with `--schema`.
+- First-party VS Code extension under `editors/vscode/` wrapping
+  `sqlshield-lsp` over stdio.
+- LSP filetype coverage extended to `go`, `javascript`, `typescript`,
+  and `typescriptreact` alongside `python`, `rust`, and `sql`.
 
 ### Changed
 - `validate_files` now returns `Result` rather than panicking on schema load.

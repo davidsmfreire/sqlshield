@@ -37,10 +37,11 @@ for err in errors:
 # ./src/queries.py:7: Column `nickname` not found in table `users`
 ```
 
-`validate_files` walks `.py` and `.rs` source files, extracts every
-embedded SQL string, and validates each against the schema. Generated
-and vendored directories (`.git`, `target`, `node_modules`, `.venv`,
-`__pycache__`, …) are skipped automatically.
+`validate_files` walks `.py`, `.rs`, `.go`, `.js`, `.ts`, and `.tsx`
+source files, extracts every embedded SQL string, and validates each
+against the schema. Generated and vendored directories (`.git`,
+`target`, `node_modules`, `.venv`, `__pycache__`, …) are skipped
+automatically.
 
 Each `SqlValidationError` exposes:
 

@@ -50,10 +50,10 @@ Rough recipe:
 ## Architecture at a glance
 
 ```
-Source file (*.py, *.rs)
+Source file (*.py, *.rs, *.go, *.js, *.ts, *.tsx)
    │ tree-sitter extracts string literals
    ▼
-SQL string (with {…} placeholders replaced by `1`)
+SQL string (with {…} / ${…} / fmt verbs replaced by `1`)
    │ sqlparser parses
    ▼
 AST (Vec<Statement>)
@@ -66,6 +66,9 @@ Vec<SqlValidationError>
 - `sqlshield-cli` — thin clap-based CLI wrapper
 - `sqlshield-py` — PyO3 bindings exposing `validate_query` / `validate_files`
 - `sqlshield-lsp` — Language Server for editor integration
+- `sqlshield-introspect` — live schema reader for Postgres / SQLite,
+  consumed by the CLI's `--db-url` flag
+- `editors/vscode` — first-party VS Code extension wrapping `sqlshield-lsp`
 
 ## Releases
 

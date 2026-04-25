@@ -28,6 +28,10 @@ It works on:
 - Plain `"…"` and raw `r#"…"#` Rust string literals (sqlx-idiomatic).
 - Python f-strings (`f"…{x}…"`) and `.format()` strings (`{{` / `}}`
   escapes preserved).
+- Go raw / interpreted string literals, including `fmt.Sprintf` verbs.
+- JavaScript / TypeScript single-, double-, and template-string literals
+  (`.js`, `.ts`, `.tsx`); `${…}` template substitutions are stripped
+  before parsing.
 - Standalone `.sql` files (via the LSP).
 
 It checks:
@@ -118,7 +122,15 @@ config; the config overrides defaults.
 schema = "db/schema.sql"
 directory = "src"
 dialect = "postgres"
+# Or pull the schema from a live database instead of a file:
+# db_url = "postgres://user:pass@localhost/mydb"
+# db_url = "sqlite:///abs/path/to/db.sqlite"
 ```
+
+Live introspection is feature-gated; the published binary ships with it
+on. To validate against a running database without a `.sql` file, pass
+`--db-url` (or set `db_url` in the config). Postgres and SQLite are
+supported today; MySQL is pending a Rust toolchain bump.
 
 Supported dialects: `generic` (default), `postgres` / `postgresql` / `pg`,
 `mysql`, `sqlite`, `mssql` / `sqlserver`, `snowflake`, `bigquery` / `bq`,
@@ -134,9 +146,13 @@ The walker prunes `target/`, `.git/`, `node_modules/`, `.venv/`, `venv/`,
 
 [`sqlshield-lsp`](sqlshield-lsp/README.md) is a Language Server that
 publishes diagnostics for embedded SQL on every `didOpen` / `didChange`.
-Any LSP-aware editor (VS Code, Neovim, Helix, Emacs, Zed) can show inline
+Any LSP-aware editor (Neovim, Helix, Emacs, Zed, …) can show inline
 squiggles on the offending SQL string. The crate's README has the wiring
 recipes.
+
+A first-party VS Code extension lives at
+[`editors/vscode/`](editors/vscode/README.md) — it spawns `sqlshield-lsp`
+over stdio and forwards diagnostics as you type.
 
 ## Python integration
 
@@ -176,9 +192,10 @@ errors = sqlshield.validate_query(
 | Function args / `CASE` / `CAST` / arithmetic         |   ✅   |
 | Case-insensitive identifier matching                 |   ✅   |
 | 12 SQL dialects via `--dialect`                      |   ✅   |
-| Live database introspection                          |   ✗    |
-| Quoted-vs-unquoted identifier folding (Postgres rules) |   ✗  |
-| `MERGE`                                              |   ✗    |
+| `MERGE INTO … USING … WHEN [NOT] MATCHED`            |   ✅   |
+| Postgres quoted-vs-unquoted identifier folding       |   ✅   |
+| Live database introspection (Postgres + SQLite)      |   ✅   |
+| MySQL live introspection                             |   ✗    |
 
 ## Limitations
 
@@ -219,6 +236,10 @@ Workspace layout:
 - [`sqlshield-cli/`](sqlshield-cli/) — clap-based CLI wrapper.
 - [`sqlshield-py/`](sqlshield-py/) — PyO3 bindings.
 - [`sqlshield-lsp/`](sqlshield-lsp/) — `tower-lsp` Language Server.
+- [`sqlshield-introspect/`](sqlshield-introspect/) — live schema reader
+  for Postgres and SQLite (consumed by `--db-url`).
+- [`editors/vscode/`](editors/vscode/) — first-party VS Code extension
+  wrapping `sqlshield-lsp`.
 
 ## Similar tools
 
@@ -233,9 +254,9 @@ Workspace layout:
   linter; complementary, not overlapping (squawk lints DDL, sqlshield
   lints embedded DML/SELECT).
 
-sqlshield's niche: language-agnostic extraction (Python + Rust today,
-extensible) with a multi-dialect parser, no database connection
-required.
+sqlshield's niche: language-agnostic extraction (Python, Rust, Go, and
+JavaScript / TypeScript today, extensible) with a multi-dialect parser,
+no database connection required (live introspection optional).
 
 ## Contributing
 
