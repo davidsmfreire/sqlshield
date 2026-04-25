@@ -1,13 +1,23 @@
-mod select;
+//! Per-clause validators. Each SQL clause (SELECT today; INSERT/UPDATE/DELETE/
+//! MERGE) implements [`ClauseValidation`] to check its references against the
+//! schema plus any CTE-derived visible relations.
 
-use std::collections::{HashMap, HashSet};
+pub(crate) mod delete;
+pub(crate) mod insert;
+pub(crate) mod merge;
+pub(crate) mod select;
+pub(crate) mod table_ref;
+pub(crate) mod update;
 
+use crate::dialect::Dialect;
 use crate::schema;
+use crate::validation::Extras;
 
 pub trait ClauseValidation {
     fn validate(
         &self,
         schema: &schema::TablesAndColumns,
-        extras: &HashMap<&str, HashSet<&str>>,
+        dialect: Dialect,
+        extras: &Extras,
     ) -> Vec<String>;
 }

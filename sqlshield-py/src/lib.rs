@@ -4,7 +4,7 @@ extern crate sqlshield as sqlshield_rs;
 
 use sqlshield_rs::validation::SqlValidationError;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 #[pyclass]
 struct PySqlValidationError(SqlValidationError);
@@ -28,17 +28,18 @@ impl PySqlValidationError {
 
 #[pyfunction]
 fn validate_files(dir: String, schema_file_path: String) -> PyResult<Vec<PySqlValidationError>> {
-    Ok(
-        sqlshield_rs::validate_files(&PathBuf::from(dir), &PathBuf::from(schema_file_path))
-            .into_iter()
-            .map(|err| PySqlValidationError(err))
-            .collect::<Vec<PySqlValidationError>>(),
-    )
+    let validation_errors =
+        sqlshield_rs::validate_files(Path::new(&dir), Path::new(&schema_file_path))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(validation_errors
+        .into_iter()
+        .map(PySqlValidationError)
+        .collect())
 }
 
 #[pyfunction]
 fn validate_query(query: &str, schema: &str) -> PyResult<Vec<String>> {
-    sqlshield_rs::validate_query(query, schema).map_err(PyValueError::new_err)
+    sqlshield_rs::validate_query(query, schema).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 /// A Python module implemented in Rust.

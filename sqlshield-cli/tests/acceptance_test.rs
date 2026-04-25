@@ -7,7 +7,8 @@ fn test_sqlshield_acceptance_python() {
     let validation_errors = sqlshield::validate_files(
         &PathBuf::from("./tests/languages/main.py"),
         &PathBuf::from("./tests/schema.sql"),
-    );
+    )
+    .expect("schema and fixture should load");
 
     let expected_validation_errors = vec![
         SqlValidationError {
@@ -55,7 +56,8 @@ fn test_sqlshield_acceptance_rust() {
     let validation_errors = sqlshield::validate_files(
         &PathBuf::from("./tests/languages/main.rs"),
         &PathBuf::from("./tests/schema.sql"),
-    );
+    )
+    .expect("schema and fixture should load");
 
     let expected_validation_errors = vec![
         SqlValidationError {

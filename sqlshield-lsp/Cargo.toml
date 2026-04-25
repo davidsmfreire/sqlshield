@@ -1,0 +1,24 @@
+[package]
+name = "sqlshield-lsp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Language Server Protocol frontend for sqlshield — schema-aware SQL diagnostics in any editor"
+
+[[bin]]
+name = "sqlshield-lsp"
+path = "src/main.rs"
+
+[dependencies]
+dashmap = "5"
+serde = { version = "1", features = ["derive"] }
+sqlparser = "0.43.1"
+sqlshield = { workspace = true }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
+toml = "0.8"
+tower-lsp = "0.20"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
