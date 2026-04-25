@@ -1,0 +1,20 @@
+id = "sqlshield"
+name = "sqlshield"
+description = "Schema-aware SQL linter for raw SQL embedded in Python, Rust, Go, JavaScript, and TypeScript source files — no database required."
+version = "0.0.1"
+schema_version = 1
+authors = ["David Freire <dev@davidfrei.re>"]
+repository = "https://github.com/davidsmfreire/sqlshield"
+
+[language_servers.sqlshield]
+name = "sqlshield"
+languages = [
+  "SQL",
+  "Python",
+  "Rust",
+  "Go",
+  "JavaScript",
+  "JSX",
+  "TypeScript",
+  "TSX",
+]

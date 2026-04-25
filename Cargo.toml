@@ -7,6 +7,10 @@ members = [
   "sqlshield-lsp",
   "sqlshield-py",
 ]
+# editors/zed targets wasm32-wasip1 and uses zed_extension_api; keep
+# it out of the main workspace so it doesn't interfere with normal
+# cargo build/test/clippy commands.
+exclude = ["editors/zed"]
 # Root `sqlshield-precommit` package is a pre-commit shim; exclude from
 # default builds so it doesn't clobber sqlshield-cli's `sqlshield` bin.
 default-members = [
