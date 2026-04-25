@@ -55,7 +55,7 @@ vscode-vsix:
 	mkdir -p $(VSCODE_DIR)/server
 	cp target/release/sqlshield-lsp $(VSCODE_DIR)/server/sqlshield-lsp
 	chmod +x $(VSCODE_DIR)/server/sqlshield-lsp
-	cd $(VSCODE_DIR) && npm ci && npm run compile
+	cd $(VSCODE_DIR) && npm ci && npm run bundle
 	mkdir -p $(DIST_DIR)
 	cd $(VSCODE_DIR) && npx --yes @vscode/vsce package \
 		--out ../../$(DIST_DIR)/sqlshield-host.vsix
@@ -82,14 +82,14 @@ vscode-vsix-target:
 		cp target/$(TARGET)/release/sqlshield-lsp $(VSCODE_DIR)/server/sqlshield-lsp; \
 		chmod +x $(VSCODE_DIR)/server/sqlshield-lsp; \
 	fi
-	cd $(VSCODE_DIR) && npm ci && npm run compile
+	cd $(VSCODE_DIR) && npm ci && npm run bundle
 	mkdir -p $(DIST_DIR)
 	cd $(VSCODE_DIR) && npx --yes @vscode/vsce package \
 		--target $(VSCE_TARGET) \
 		--out ../../$(DIST_DIR)/sqlshield-$(VSCE_TARGET).vsix
 
 vscode-clean:
-	rm -rf $(VSCODE_DIR)/server $(VSCODE_DIR)/out $(DIST_DIR)
+	rm -rf $(VSCODE_DIR)/server $(VSCODE_DIR)/out $(VSCODE_DIR)/dist $(DIST_DIR)
 
 .PHONY: hooks venv deps develop dev-setup build test all clean \
 	vscode-vsix vscode-vsix-target vscode-clean
