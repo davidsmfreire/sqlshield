@@ -1,6 +1,9 @@
 [package]
 name = "sqlshield-py"
-version.workspace = true
+# Tracked independently of the rest of the workspace because PyPI
+# rejects re-uploads of the same version, so metadata-only fixes
+# need a fresh number even when no Rust code changed.
+version = "0.0.3"
 edition.workspace = true
 authors.workspace = true
 rust-version.workspace = true
