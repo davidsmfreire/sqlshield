@@ -74,7 +74,7 @@ jobs:
             tar -C _stage -czf dist/sqlshield-lsp-$target.tar.gz sqlshield-lsp
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sqlshield-lsp-${{ matrix.target.rust }}
           path: dist/*
