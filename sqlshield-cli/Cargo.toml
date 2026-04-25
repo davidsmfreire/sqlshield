@@ -36,5 +36,5 @@ clap = { version = "4.4.18", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlshield = { workspace = true }
-sqlshield-introspect = { path = "../sqlshield-introspect", optional = true }
+sqlshield-introspect = { workspace = true, optional = true }
 toml = "0.8"

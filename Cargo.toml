@@ -17,4 +17,5 @@ license = "MIT"
 repository = "https://github.com/davidsmfreire/sqlshield"
 
 [workspace.dependencies]
-sqlshield = { version = "0.0.1", path = "sqlshield"}
+sqlshield = { version = "0.0.1", path = "sqlshield" }
+sqlshield-introspect = { version = "0.0.1", path = "sqlshield-introspect" }
