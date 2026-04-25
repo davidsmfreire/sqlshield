@@ -1331,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "sqlshield"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "colored",
  "rayon",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "sqlshield-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "clap",
  "serde",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "sqlshield-introspect"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "postgres",
  "rusqlite",
@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "sqlshield-lsp"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "dashmap",
  "serde",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "sqlshield-py"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "pyo3",
  "sqlshield",

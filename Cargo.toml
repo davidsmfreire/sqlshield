@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 authors = ["David Freire <work@davidfrei.re>"]
 edition = "2021"
 rust-version = "1.80"
@@ -17,5 +17,5 @@ license = "MIT"
 repository = "https://github.com/davidsmfreire/sqlshield"
 
 [workspace.dependencies]
-sqlshield = { version = "0.0.1", path = "sqlshield" }
-sqlshield-introspect = { version = "0.0.1", path = "sqlshield-introspect" }
+sqlshield = { version = "0.0.2", path = "sqlshield" }
+sqlshield-introspect = { version = "0.0.2", path = "sqlshield-introspect" }
