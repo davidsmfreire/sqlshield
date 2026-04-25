@@ -52,8 +52,8 @@ It checks:
 # Rust users
 cargo install sqlshield-cli
 
-# Python users
-pip install sqlshield
+# Python users (distribution name is `sqlshield-py`; module import is `sqlshield`)
+pip install sqlshield-py
 ```
 
 Or build from source:

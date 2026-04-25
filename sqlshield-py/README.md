@@ -7,8 +7,11 @@ code without touching a database.
 ## Install
 
 ```sh
-pip install sqlshield
+pip install sqlshield-py
 ```
+
+The PyPI distribution name is `sqlshield-py` (the bare `sqlshield` name
+was already taken). The module import is still `sqlshield`.
 
 ## Usage
 
