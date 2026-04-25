@@ -54,6 +54,14 @@ pub fn introspect(db_url: &str) -> Result<TablesAndColumns, IntrospectError> {
 }
 
 fn url_scheme(s: &str) -> Option<String> {
+    // Windows drive letters (`C:\…`) parse as a single-character URL
+    // scheme, which would otherwise route a bare path through the
+    // unsupported-scheme branch. Treat any single-letter "scheme" as a
+    // bare filesystem path.
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return None;
+    }
     url::Url::parse(s)
         .ok()
         .map(|u| u.scheme().to_ascii_lowercase())
@@ -169,5 +177,13 @@ mod tests {
         assert!(tables.contains_key("orders"));
         assert!(tables["users"].contains("name"));
         assert!(tables["orders"].contains("user_id"));
+    }
+
+    #[test]
+    fn windows_drive_letter_is_not_treated_as_url_scheme() {
+        assert_eq!(url_scheme("C:\\foo\\bar.db"), None);
+        assert_eq!(url_scheme("d:/relative.sqlite"), None);
+        assert_eq!(url_scheme("postgres://x/y").as_deref(), Some("postgres"));
+        assert_eq!(url_scheme("/abs/path.db"), None);
     }
 }
