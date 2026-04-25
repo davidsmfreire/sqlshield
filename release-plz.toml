@@ -1,0 +1,5 @@
+[workspace]
+changelog_update = true
+git_release_enable = true
+publish = true
+semver_check = false

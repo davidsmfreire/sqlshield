@@ -1,0 +1,24 @@
+[package]
+name = "sqlshield-introspect"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Live database introspection for sqlshield: read schema directly from Postgres / SQLite (MySQL pending)"
+
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["dep:postgres"]
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+sqlshield.workspace = true
+thiserror = "1.0"
+url = "2.5"
+postgres = { version = "0.19", optional = true }
+rusqlite = { version = "0.31", optional = true, features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"

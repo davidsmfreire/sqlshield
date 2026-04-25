@@ -1,0 +1,78 @@
+{
+  "name": "sqlshield-vscode",
+  "displayName": "sqlshield",
+  "description": "Schema-aware static linter for raw SQL embedded in Python, Rust, and .sql files.",
+  "version": "0.0.1",
+  "publisher": "davidsmfreire",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davidsmfreire/sqlshield"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "sql",
+    "linter",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "schema"
+  ],
+  "activationEvents": [
+    "onLanguage:sql",
+    "onLanguage:python",
+    "onLanguage:rust",
+    "onLanguage:go",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "workspaceContains:**/.sqlshield.toml",
+    "workspaceContains:**/schema.sql"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "sqlshield",
+      "properties": {
+        "sqlshield.serverPath": {
+          "type": "string",
+          "default": "sqlshield-lsp",
+          "description": "Path to the sqlshield-lsp binary. Defaults to 'sqlshield-lsp' on PATH."
+        },
+        "sqlshield.trace.server": {
+          "type": "string",
+          "scope": "window",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP traffic between VS Code and the sqlshield language server."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "sqlshield.restartServer",
+        "title": "sqlshield: Restart Language Server"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

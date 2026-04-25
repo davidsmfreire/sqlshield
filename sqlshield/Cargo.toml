@@ -1,0 +1,29 @@
+[package]
+name = "sqlshield"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tools to validate raw sql queries declared in variables of arbitrary source code"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+colored = "2.1.0"
+rayon = "1.10"
+regex = "1.10.3"
+sqlparser = { version = "0.43.1", features = ["visitor"] }
+thiserror = "1.0"
+tree-sitter = "0.20.10"
+tree-sitter-go = "0.20.0"
+tree-sitter-javascript = "0.20.4"
+tree-sitter-python = "0.20.4"
+tree-sitter-rust = "0.20.4"
+tree-sitter-typescript = "0.20.5"
+walkdir = "2.4.0"
+
+[dev-dependencies]
+sqlparser = "0.43.1"
+tempfile = "3"
