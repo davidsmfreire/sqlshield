@@ -1,8 +1,8 @@
 # sqlshield
 
 > Schema-aware SQL linter for embedded queries. Catches missing tables,
-> missing columns, and broken JOINs in raw SQL strings inside Python and
-> Rust source — at edit time, not at runtime.
+> missing columns, and broken JOINs in raw SQL strings inside source code 
+> — at edit time, not at runtime.
 
 ```python
 def fetch_user(uid):
