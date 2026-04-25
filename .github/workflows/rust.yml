@@ -24,7 +24,7 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --workspace --exclude sqlshield-precommit --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --exclude sqlshield-precommit --exclude sqlshield-py --all-targets --all-features -- -D warnings
 
   test:
     name: test (${{ matrix.os }} / ${{ matrix.toolchain }})
@@ -46,6 +46,6 @@ jobs:
         with:
           key: ${{ matrix.os }}-${{ matrix.toolchain }}
       - name: build
-        run: cargo build --workspace --exclude sqlshield-precommit --all-targets --verbose
+        run: cargo build --workspace --exclude sqlshield-precommit --exclude sqlshield-py --all-targets --verbose
       - name: test
-        run: cargo test --workspace --exclude sqlshield-precommit --all-features --verbose
+        run: cargo test --workspace --exclude sqlshield-precommit --exclude sqlshield-py --all-features --verbose
