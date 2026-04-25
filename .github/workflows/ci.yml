@@ -43,6 +43,8 @@ jobs:
           python-version: 3.x
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          CFLAGS: "-std=gnu11"
         with:
           working-directory: sqlshield-py
           target: ${{ matrix.platform.target }}
@@ -75,6 +77,8 @@ jobs:
           python-version: 3.x
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          CFLAGS: "-std=gnu11"
         with:
           working-directory: sqlshield-py
           target: ${{ matrix.platform.target }}
