@@ -1,20 +1,24 @@
 use sqlparser::{
     ast::{
-        AlterTableOperation, ColumnDef, Expr, ObjectName, Query, SelectItem, SetExpr, Statement,
-        ViewColumnDef,
+        AlterTableOperation, ColumnDef, Expr, Ident, ObjectName, Query, SelectItem, SetExpr,
+        Statement, ViewColumnDef,
     },
     dialect::GenericDialect,
     parser::Parser,
 };
 use std::collections::{HashMap, HashSet};
 
+use crate::dialect::Dialect;
 use crate::error::Result;
 
-pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns> {
+pub fn load_schema(schema: &[u8], dialect: Dialect) -> Result<super::TablesAndColumns> {
     let schema_str = String::from_utf8_lossy(schema);
 
-    let dialect = GenericDialect {};
-    let statements = Parser::parse_sql(&dialect, schema_str.as_ref())?;
+    // Always parse with GenericDialect: schema files often mix DDL syntax
+    // and `Generic` is the most permissive. Identifier folding is the part
+    // that varies by dialect, not parsing.
+    let parser_dialect = GenericDialect {};
+    let statements = Parser::parse_sql(&parser_dialect, schema_str.as_ref())?;
 
     let mut tables: HashMap<String, HashSet<String>> = HashMap::new();
     for statement in statements {
@@ -25,12 +29,12 @@ pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns> {
                 query,
                 ..
             } => {
-                ingest_create_table(&name, &columns, query.as_deref(), &mut tables);
+                ingest_create_table(&name, &columns, query.as_deref(), dialect, &mut tables);
             }
             Statement::AlterTable {
                 name, operations, ..
             } => {
-                apply_alters(&name, &operations, &mut tables);
+                apply_alters(&name, &operations, dialect, &mut tables);
             }
             Statement::CreateView {
                 name,
@@ -38,7 +42,7 @@ pub fn load_schema(schema: &[u8]) -> Result<super::TablesAndColumns> {
                 query,
                 ..
             } => {
-                ingest_create_view(&name, &columns, &query, &mut tables);
+                ingest_create_view(&name, &columns, &query, dialect, &mut tables);
             }
             _ => {}
         }
@@ -50,6 +54,7 @@ fn ingest_create_table(
     name: &ObjectName,
     columns: &[ColumnDef],
     query: Option<&Query>,
+    dialect: Dialect,
     tables: &mut HashMap<String, HashSet<String>>,
 ) {
     let Some(last_ident) = name.0.last() else {
@@ -60,11 +65,14 @@ fn ingest_create_table(
     // names from the source query's projection. Plain CREATE TABLE uses
     // the explicit list. If both are present, the explicit list wins.
     let columns_set: HashSet<String> = if !columns.is_empty() {
-        columns.iter().map(|e| lc(&e.name.value)).collect()
+        columns
+            .iter()
+            .map(|e| fold_ident(&e.name, dialect))
+            .collect()
     } else if let Some(q) = query {
         project_column_names(q)
             .into_iter()
-            .map(|s| lc(&s))
+            .map(|i| fold_ident(&i, dialect))
             .collect()
     } else {
         HashSet::new()
@@ -73,11 +81,10 @@ fn ingest_create_table(
     // Store the bare table name so unqualified queries resolve; if the
     // schema was declared as `schema.table`, ALSO store the fully
     // qualified form so qualified queries can be resolved strictly.
-    // Both keys are case-folded: identifier matching is ASCII case-insensitive
-    // throughout sqlshield.
-    tables.insert(lc(&last_ident.value), columns_set.clone());
+    // Both keys are folded by the active dialect.
+    tables.insert(fold_ident(last_ident, dialect), columns_set.clone());
     if name.0.len() > 1 {
-        tables.insert(lc(&display_name(name)), columns_set);
+        tables.insert(qualified_key(name, dialect), columns_set);
     }
 }
 
@@ -85,6 +92,7 @@ fn ingest_create_view(
     name: &ObjectName,
     columns: &[ViewColumnDef],
     query: &Query,
+    dialect: Dialect,
     tables: &mut HashMap<String, HashSet<String>>,
 ) {
     let Some(last_ident) = name.0.last() else {
@@ -93,50 +101,76 @@ fn ingest_create_view(
     // Explicit column list `CREATE VIEW v(a, b) AS …` overrides whatever
     // names the body projects.
     let columns_set: HashSet<String> = if !columns.is_empty() {
-        columns.iter().map(|c| lc(&c.name.value)).collect()
+        columns
+            .iter()
+            .map(|c| fold_ident(&c.name, dialect))
+            .collect()
     } else {
         project_column_names(query)
             .into_iter()
-            .map(|s| lc(&s))
+            .map(|i| fold_ident(&i, dialect))
             .collect()
     };
-    tables.insert(lc(&last_ident.value), columns_set.clone());
+    tables.insert(fold_ident(last_ident, dialect), columns_set.clone());
     if name.0.len() > 1 {
-        tables.insert(lc(&display_name(name)), columns_set);
+        tables.insert(qualified_key(name, dialect), columns_set);
     }
 }
 
-/// Case-fold to ASCII lowercase. Used at every identifier insertion and
-/// lookup site so the schema map and query-side identifiers compare
-/// case-insensitively.
-pub(crate) fn lc(s: &str) -> String {
-    s.to_ascii_lowercase()
+/// Dialect-aware identifier folding. Postgres: quoted preserves case,
+/// unquoted lowercases. All other dialects: ASCII lowercase regardless.
+pub(crate) fn fold(s: &str, quoted: bool, dialect: Dialect) -> String {
+    if dialect == Dialect::Postgres && quoted {
+        s.to_string()
+    } else {
+        s.to_ascii_lowercase()
+    }
 }
 
-/// Owned-string version of `validation::project_columns`. Used at schema-
-/// ingestion time to capture the column names that a view or CTAS body
-/// projects.
-fn project_column_names(query: &Query) -> Vec<String> {
+pub(crate) fn fold_ident(ident: &Ident, dialect: Dialect) -> String {
+    fold(&ident.value, ident.quote_style.is_some(), dialect)
+}
+
+/// Treat `s` as an unquoted identifier when folding. Use this only for
+/// literal strings that never came from a quoted Ident (e.g., an alias
+/// already stored unquoted).
+pub(crate) fn fold_str(s: &str, dialect: Dialect) -> String {
+    fold(s, false, dialect)
+}
+
+/// Per-part folded join of an `ObjectName` (`"Public".users` → `Public.users`
+/// in Postgres mode; `public.users` everywhere else).
+pub(crate) fn qualified_key(name: &ObjectName, dialect: Dialect) -> String {
+    name.0
+        .iter()
+        .map(|p| fold_ident(p, dialect))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Owned version that captures projected column names as Idents (preserving
+/// quote_style) so callers can fold them in dialect-aware fashion.
+fn project_column_names(query: &Query) -> Vec<Ident> {
     project_names_of_body(query.body.as_ref())
 }
 
-fn project_names_of_body(body: &SetExpr) -> Vec<String> {
+fn project_names_of_body(body: &SetExpr) -> Vec<Ident> {
     let mut names = Vec::new();
     match body {
         SetExpr::Select(select_box) => {
             for item in &select_box.projection {
                 match item {
                     SelectItem::UnnamedExpr(expr) => match expr {
-                        Expr::Identifier(ident) => names.push(ident.value.clone()),
+                        Expr::Identifier(ident) => names.push(ident.clone()),
                         Expr::CompoundIdentifier(idents) => {
                             if let Some(last) = idents.last() {
-                                names.push(last.value.clone());
+                                names.push(last.clone());
                             }
                         }
                         _ => {}
                     },
                     SelectItem::ExprWithAlias { alias, .. } => {
-                        names.push(alias.value.clone());
+                        names.push(alias.clone());
                     }
                     _ => {}
                 }
@@ -157,30 +191,35 @@ fn project_names_of_body(body: &SetExpr) -> Vec<String> {
 fn apply_alters(
     name: &ObjectName,
     operations: &[AlterTableOperation],
+    dialect: Dialect,
     tables: &mut HashMap<String, HashSet<String>>,
 ) {
     // ALTER TABLE updates both the bare and (if applicable) the qualified
     // twin so the two keep in sync after migrations. Unknown tables are
     // silently skipped — schema files often list ops in dependency order
     // and over-strict validation here trips real-world dumps.
-    for key in target_keys(name, tables) {
+    for key in target_keys(name, dialect, tables) {
         let Some(cols) = tables.get_mut(&key) else {
             continue;
         };
         for op in operations {
-            apply_one(cols, op);
+            apply_one(cols, op, dialect);
         }
     }
 }
 
-fn target_keys(name: &ObjectName, tables: &HashMap<String, HashSet<String>>) -> Vec<String> {
+fn target_keys(
+    name: &ObjectName,
+    dialect: Dialect,
+    tables: &HashMap<String, HashSet<String>>,
+) -> Vec<String> {
     let Some(last) = name.0.last() else {
         return Vec::new();
     };
-    let bare = lc(&last.value);
+    let bare = fold_ident(last, dialect);
     if name.0.len() > 1 {
         // Qualified ALTER: target only the exact qualified key.
-        let q = lc(&display_name(name));
+        let q = qualified_key(name, dialect);
         if tables.contains_key(&q) {
             return vec![q];
         }
@@ -201,20 +240,20 @@ fn target_keys(name: &ObjectName, tables: &HashMap<String, HashSet<String>>) -> 
         .collect()
 }
 
-fn apply_one(cols: &mut HashSet<String>, op: &AlterTableOperation) {
+fn apply_one(cols: &mut HashSet<String>, op: &AlterTableOperation, dialect: Dialect) {
     match op {
         AlterTableOperation::AddColumn { column_def, .. } => {
-            cols.insert(lc(&column_def.name.value));
+            cols.insert(fold_ident(&column_def.name, dialect));
         }
         AlterTableOperation::DropColumn { column_name, .. } => {
-            cols.remove(lc(&column_name.value).as_str());
+            cols.remove(fold_ident(column_name, dialect).as_str());
         }
         AlterTableOperation::RenameColumn {
             old_column_name,
             new_column_name,
         } => {
-            if cols.remove(lc(&old_column_name.value).as_str()) {
-                cols.insert(lc(&new_column_name.value));
+            if cols.remove(fold_ident(old_column_name, dialect).as_str()) {
+                cols.insert(fold_ident(new_column_name, dialect));
             }
         }
         // Other ops (constraints, RLS, RENAME TABLE, …) don't change the
@@ -223,19 +262,12 @@ fn apply_one(cols: &mut HashSet<String>, op: &AlterTableOperation) {
     }
 }
 
-fn display_name(name: &ObjectName) -> String {
-    name.0
-        .iter()
-        .map(|p| p.value.as_str())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::load_schema;
+    use crate::dialect::Dialect;
 
     #[test]
     fn test_load_schema() {
@@ -260,8 +292,40 @@ mod tests {
             ),
         ]);
 
-        let result = load_schema(schema.as_bytes()).unwrap();
+        let result = load_schema(schema.as_bytes(), Dialect::default()).unwrap();
 
         assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn postgres_quoted_identifiers_preserve_case() {
+        let schema = r#"CREATE TABLE "Users" ("Id" INT, "Name" VARCHAR(64));"#;
+        let result = load_schema(schema.as_bytes(), Dialect::Postgres).unwrap();
+        // Quoted identifiers in Postgres preserve case → key is `Users`,
+        // not `users`.
+        assert!(result.contains_key("Users"));
+        assert!(!result.contains_key("users"));
+        let cols = &result["Users"];
+        assert!(cols.contains("Id"));
+        assert!(cols.contains("Name"));
+        assert!(!cols.contains("id"));
+    }
+
+    #[test]
+    fn postgres_unquoted_identifiers_lowercased() {
+        let schema = "CREATE TABLE Users (Id INT, Name VARCHAR(64));";
+        let result = load_schema(schema.as_bytes(), Dialect::Postgres).unwrap();
+        assert!(result.contains_key("users"));
+        assert!(result["users"].contains("id"));
+        assert!(result["users"].contains("name"));
+    }
+
+    #[test]
+    fn non_postgres_dialect_lowercases_quoted_identifiers() {
+        let schema = r#"CREATE TABLE "Users" ("Id" INT);"#;
+        // MySQL and friends keep the legacy ASCII case-insensitive behavior.
+        let result = load_schema(schema.as_bytes(), Dialect::MySql).unwrap();
+        assert!(result.contains_key("users"));
+        assert!(!result.contains_key("Users"));
     }
 }

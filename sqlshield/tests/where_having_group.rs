@@ -148,3 +148,41 @@ fn function_call_in_where_does_not_false_positive() {
     // The `name` inside should validate fine.
     assert!(!errs.iter().any(|e| e.contains("`name`")), "got: {errs:?}");
 }
+
+// -------- ambiguity --------
+
+#[test]
+fn unqualified_column_in_two_tables_is_ambiguous() {
+    // `id` exists in both `users` and `receipt`; an unqualified `id` in the
+    // WHERE clause is ambiguous and should be flagged.
+    let errs =
+        run("SELECT users.name FROM users JOIN receipt ON users.id = receipt.user_id WHERE id > 0");
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("ambiguous") && e.contains("`id`")),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn unqualified_column_in_one_table_is_not_ambiguous() {
+    // `name` is only in `users`; not ambiguous.
+    let errs = run(
+        "SELECT users.name FROM users JOIN receipt ON users.id = receipt.user_id WHERE name = 'a'",
+    );
+    assert!(
+        !errs.iter().any(|e| e.contains("ambiguous")),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn join_using_does_not_flag_ambiguity_for_shared_column() {
+    // USING(id) requires id to be present on both sides — that's the point.
+    // We must not emit an "ambiguous" error here.
+    let errs = run("SELECT users.name FROM users JOIN receipt USING (id)");
+    assert!(
+        !errs.iter().any(|e| e.contains("ambiguous")),
+        "got: {errs:?}"
+    );
+}

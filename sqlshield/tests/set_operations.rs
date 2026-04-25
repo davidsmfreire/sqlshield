@@ -86,6 +86,37 @@ fn union_with_wrong_table_in_left_branch() {
 }
 
 #[test]
+fn union_arity_mismatch_is_flagged() {
+    let sql = "SELECT id, name FROM users UNION SELECT id FROM receipt";
+    let errs = run(sql);
+    assert!(
+        errs.iter()
+            .any(|e| e.to_lowercase().contains("column count")),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn union_arity_match_is_clean() {
+    let sql = "SELECT id, name FROM users UNION SELECT id, user_id FROM receipt";
+    assert!(run(sql).is_empty());
+}
+
+#[test]
+fn union_arity_skipped_when_branch_has_wildcard() {
+    // Wildcard arity is unknown statically; we should not emit a false
+    // positive arity error against a wildcard branch.
+    let sql = "SELECT * FROM users UNION SELECT id, name FROM users";
+    let errs = run(sql);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.to_lowercase().contains("column count")),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
 fn derived_table_in_one_branch_does_not_leak_to_other() {
     // `d` is a derived table in the left branch; the right branch shouldn't
     // be able to see it — and doesn't reference it here, so this is valid.

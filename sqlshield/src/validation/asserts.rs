@@ -1,67 +1,54 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::dialect::Dialect;
 use crate::schema;
-use crate::schema::sql::lc;
+use crate::schema::sql::{fold_ident, qualified_key};
+
+use super::Extras;
 
 /// Returns `Some(name)` if the relation cannot be resolved against the schema
 /// or CTE extras. Qualified references (`schema.table`) require an exact
 /// qualified match; unqualified references match on the bare table name.
-/// Comparisons are ASCII case-insensitive.
+/// Identifier comparisons honor the dialect's folding rules.
 pub fn is_relation_in_schema(
     relation: &sqlparser::ast::TableFactor,
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
 ) -> Option<String> {
     match relation {
         sqlparser::ast::TableFactor::Table { name, .. } => {
-            let name_full = name
+            let display = name
                 .0
                 .iter()
                 .map(|e| e.value.as_str())
                 .collect::<Vec<&str>>()
                 .join(".");
-            let name_full_lc = lc(&name_full);
 
             if name.0.len() > 1 {
-                if schema.contains_key(&name_full_lc) || extras_contains(extras, &name_full_lc) {
+                let key = qualified_key(name, dialect);
+                if schema.contains_key(&key) || extras.contains_key(&key) {
                     return None;
                 }
-                return Some(name_full);
+                return Some(display);
             }
 
-            let last_lc = lc(&name
+            let last = name
                 .0
                 .last()
-                .expect("sqlparser guarantees ObjectName has ≥1 ident")
-                .value);
-            if schema.contains_key(&last_lc) || extras_contains(extras, &last_lc) {
+                .expect("sqlparser guarantees ObjectName has ≥1 ident");
+            let key = fold_ident(last, dialect);
+            if schema.contains_key(&key) || extras.contains_key(&key) {
                 return None;
             }
-            Some(name_full)
+            Some(display)
         }
         _ => None,
     }
 }
 
-/// Case-insensitive lookup against the borrowed-`&str` extras map. Extras
-/// keys come from query-side identifiers (CTE / derived-table aliases) and
-/// aren't lowercased at insertion since they're tied to AST lifetimes.
-pub(crate) fn extras_contains(extras: &HashMap<&str, HashSet<&str>>, key: &str) -> bool {
-    extras.keys().any(|k| k.eq_ignore_ascii_case(key))
-}
-
-/// Case-insensitive lookup that returns the matching value.
-pub(crate) fn extras_get<'a>(
-    extras: &'a HashMap<&'a str, HashSet<&'a str>>,
-    key: &str,
-) -> Option<&'a HashSet<&'a str>> {
-    extras
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(key))
-        .map(|(_, v)| v)
-}
-
-/// Case-insensitive `set.contains` for a borrowed `&str` set.
-pub(crate) fn set_contains_ci(set: &HashSet<&str>, needle: &str) -> bool {
-    set.iter().any(|s| s.eq_ignore_ascii_case(needle))
+/// Lookup against the dialect-folded extras map. Caller passes the already-
+/// folded key; this is just a thin wrapper to keep the call sites readable.
+pub(crate) fn extras_get<'a>(extras: &'a Extras, key: &str) -> Option<&'a HashSet<String>> {
+    extras.get(key)
 }

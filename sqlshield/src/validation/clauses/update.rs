@@ -1,40 +1,42 @@
 //! UPDATE ... SET ... WHERE ... validation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use sqlparser::ast::{Assignment, Expr, TableFactor, TableWithJoins};
 
-use crate::schema::sql::lc;
+use crate::dialect::Dialect;
+use crate::schema::sql::fold_ident;
 use crate::schema::TablesAndColumns;
-use crate::validation::asserts;
+use crate::validation::{asserts, Extras};
 
 use super::select::{collect_visible_relations, validate_expr_column_refs};
 use super::table_ref::display_name;
 
-pub(crate) fn validate_update<'a>(
-    table: &'a TableWithJoins,
-    assignments: &'a [Assignment],
-    from: Option<&'a TableWithJoins>,
-    selection: Option<&'a Expr>,
+pub(crate) fn validate_update(
+    table: &TableWithJoins,
+    assignments: &[Assignment],
+    from: Option<&TableWithJoins>,
+    selection: Option<&Expr>,
     schema: &TablesAndColumns,
-    parent_extras: &HashMap<&'a str, HashSet<&'a str>>,
+    dialect: Dialect,
+    parent_extras: &Extras,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    let extras: HashMap<&str, HashSet<&str>> = parent_extras.clone();
+    let extras: Extras = parent_extras.clone();
 
     // Target table must exist.
-    if let Some(name) = asserts::is_relation_in_schema(&table.relation, schema, &extras) {
+    if let Some(name) = asserts::is_relation_in_schema(&table.relation, schema, dialect, &extras) {
         errors.push(format!("Table `{name}` not found in schema nor subqueries"));
     }
 
     // Assignment targets: each `SET col = ...` column must exist in the target table.
     if let TableFactor::Table { name, .. } = &table.relation {
-        if let Some(cols) = super::table_ref::resolve_table_columns(name, schema) {
+        if let Some(cols) = super::table_ref::resolve_table_columns(name, schema, dialect) {
             for assignment in assignments {
                 let Some(last) = assignment.id.last() else {
                     continue;
                 };
-                if !cols.contains(&lc(&last.value)) {
+                if !cols.contains(&fold_ident(last, dialect)) {
                     errors.push(format!(
                         "Column `{}` not found in table `{}`",
                         last.value,
@@ -61,6 +63,7 @@ pub(crate) fn validate_update<'a>(
             where_expr,
             &visible,
             schema,
+            dialect,
             &extras,
             &no_aliases,
             &mut errors,
@@ -73,6 +76,7 @@ pub(crate) fn validate_update<'a>(
             &assignment.value,
             &visible,
             schema,
+            dialect,
             &extras,
             &no_aliases,
             &mut errors,

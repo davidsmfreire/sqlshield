@@ -66,3 +66,27 @@ fn join_using_unknown_column() {
     let errs = run(sql);
     assert!(errs.iter().any(|e| e.contains("`typo`")));
 }
+
+// -------- NATURAL --------
+
+#[test]
+fn natural_join_with_shared_column_is_valid() {
+    // `id` is on both `users` and `receipt`; NATURAL JOIN finds it.
+    let sql = "SELECT users.name FROM users NATURAL JOIN receipt";
+    assert!(run(sql).is_empty(), "got: {:?}", run(sql));
+}
+
+#[test]
+fn natural_join_with_no_shared_column_is_flagged() {
+    // Schema where two tables share no column names.
+    let schema = "
+        CREATE TABLE alpha (a INT, b VARCHAR(64));
+        CREATE TABLE beta (c INT, d VARCHAR(64));
+    ";
+    let errs = validate_query("SELECT a FROM alpha NATURAL JOIN beta", schema).expect("parse ok");
+    assert!(
+        errs.iter()
+            .any(|e| e.to_uppercase().contains("NATURAL JOIN")),
+        "got: {errs:?}"
+    );
+}

@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
-use sqlshield::{Dialect, SqlShieldError};
+use sqlshield::{schema::TablesAndColumns, Dialect, SqlShieldError};
 
 const EXIT_VALIDATION_ERRORS: u8 = 1;
 const EXIT_CONFIG_ERROR: u8 = 2;
@@ -27,6 +27,13 @@ struct Args {
     /// Schema file. Defaults to "schema.sql".
     #[arg(short, long, value_hint = clap::ValueHint::FilePath)]
     schema: Option<PathBuf>,
+
+    /// Live database URL — read schema directly from a running DB
+    /// (postgres / sqlite). Mutually exclusive with --schema.
+    /// Examples: `postgres://user:pass@localhost/mydb`,
+    /// `sqlite:///abs/path/to/db.sqlite`, `./relative.sqlite`.
+    #[arg(long, conflicts_with = "schema")]
+    db_url: Option<String>,
 
     /// SQL dialect to parse with (generic, postgres, mysql, sqlite, mssql,
     /// snowflake, bigquery, redshift, clickhouse, duckdb, hive, ansi).
@@ -66,15 +73,16 @@ fn main() -> ExitCode {
         }
     };
 
-    let schema_path = args
-        .schema
-        .clone()
-        .or(file_config.schema)
-        .unwrap_or_else(|| PathBuf::from("schema.sql"));
-
     let dialect = args.dialect.or(file_config.dialect).unwrap_or_default();
 
+    let db_url = args.db_url.clone().or_else(|| file_config.db_url.clone());
+
     if args.stdin {
+        let schema_path = args
+            .schema
+            .clone()
+            .or_else(|| file_config.schema.clone())
+            .unwrap_or_else(|| PathBuf::from("schema.sql"));
         return run_stdin(&schema_path, dialect, args.format);
     }
 
@@ -84,14 +92,32 @@ fn main() -> ExitCode {
         .or(file_config.directory)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let validation_errors =
-        match sqlshield::validate_files_with_dialect(&directory, &schema_path, dialect) {
-            Ok(errors) => errors,
+    // Resolve the schema either via live introspection or from a file.
+    let schema: TablesAndColumns = match db_url.as_deref() {
+        Some(url) => match introspect_schema(url) {
+            Ok(s) => s,
             Err(err) => {
                 eprintln!("sqlshield: {err}");
                 return ExitCode::from(EXIT_CONFIG_ERROR);
             }
-        };
+        },
+        None => {
+            let schema_path = args
+                .schema
+                .clone()
+                .or(file_config.schema)
+                .unwrap_or_else(|| PathBuf::from("schema.sql"));
+            match sqlshield::schema::load_schema_from_file(&schema_path, dialect) {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!("sqlshield: {err}");
+                    return ExitCode::from(EXIT_CONFIG_ERROR);
+                }
+            }
+        }
+    };
+
+    let validation_errors = sqlshield::validate_files_with_schema(&directory, &schema, dialect);
 
     match args.format {
         OutputFormat::Text => {
@@ -122,6 +148,16 @@ fn main() -> ExitCode {
     } else {
         ExitCode::from(EXIT_VALIDATION_ERRORS)
     }
+}
+
+#[cfg(feature = "introspect")]
+fn introspect_schema(url: &str) -> Result<TablesAndColumns, String> {
+    sqlshield_introspect::introspect(url).map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "introspect"))]
+fn introspect_schema(_url: &str) -> Result<TablesAndColumns, String> {
+    Err("--db-url requires the `introspect` feature (rebuild with --features introspect)".into())
 }
 
 fn run_stdin(schema_path: &std::path::Path, dialect: Dialect, format: OutputFormat) -> ExitCode {

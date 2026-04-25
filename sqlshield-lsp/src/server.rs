@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use dashmap::DashMap;
 use sqlshield::schema::{self, TablesAndColumns};
@@ -22,16 +23,22 @@ use tracing::{debug, error, info, warn};
 use crate::config::{self, ServerConfig};
 
 /// Per-request loaded state: the parsed schema plus the chosen dialect.
+/// `schema_mtime` is captured at load time so the server can detect when the
+/// underlying schema file has been edited and trigger a reload.
 struct LoadedState {
     schema: TablesAndColumns,
     dialect: Dialect,
     schema_source: Option<PathBuf>,
+    schema_mtime: Option<SystemTime>,
 }
 
 pub struct Backend {
     client: Client,
     documents: DashMap<Url, String>,
     state: RwLock<Option<Arc<LoadedState>>>,
+    /// Workspace root captured at `initialize` time; needed so reloads can
+    /// re-discover `.sqlshield.toml` after the schema file changes.
+    root_dir: RwLock<Option<PathBuf>>,
 }
 
 impl Backend {
@@ -40,10 +47,13 @@ impl Backend {
             client,
             documents: DashMap::new(),
             state: RwLock::new(None),
+            root_dir: RwLock::new(None),
         }
     }
 
     async fn load_state_from_dir(&self, dir: &Path) {
+        *self.root_dir.write().await = Some(dir.to_path_buf());
+
         let cfg = match config::discover(dir) {
             Ok(cfg) => cfg,
             Err(err) => {
@@ -54,11 +64,12 @@ impl Backend {
         };
 
         let loaded = match cfg.schema_path.as_ref() {
-            Some(path) => match schema::load_schema_from_file(path) {
+            Some(path) => match schema::load_schema_from_file(path, cfg.dialect) {
                 Ok(schema) => LoadedState {
                     schema,
                     dialect: cfg.dialect,
                     schema_source: Some(path.clone()),
+                    schema_mtime: file_mtime(path),
                 },
                 Err(err) => {
                     self.log_error(format!("failed to load schema {}: {err}", path.display()))
@@ -68,6 +79,7 @@ impl Backend {
                         schema: TablesAndColumns::new(),
                         dialect: cfg.dialect,
                         schema_source: None,
+                        schema_mtime: None,
                     }
                 }
             },
@@ -78,6 +90,7 @@ impl Backend {
                     schema: TablesAndColumns::new(),
                     dialect: cfg.dialect,
                     schema_source: None,
+                    schema_mtime: None,
                 }
             }
         };
@@ -89,7 +102,34 @@ impl Backend {
         *self.state.write().await = Some(Arc::new(loaded));
     }
 
+    /// Poll the schema file's mtime; if it has changed since the last load,
+    /// re-run discovery + load. Cheap enough to call before every validation
+    /// (one stat per buffer-change), and avoids the need for a dedicated file
+    /// watcher or `workspace/didChangeWatchedFiles` registration.
+    async fn maybe_reload(&self) {
+        let needs_reload = {
+            let guard = self.state.read().await;
+            let Some(state) = guard.as_ref() else {
+                return;
+            };
+            let Some(path) = state.schema_source.as_ref() else {
+                return;
+            };
+            let current = file_mtime(path);
+            current != state.schema_mtime
+        };
+        if !needs_reload {
+            return;
+        }
+        let root = self.root_dir.read().await.clone();
+        if let Some(root) = root {
+            self.log_info("schema file changed — reloading").await;
+            self.load_state_from_dir(&root).await;
+        }
+    }
+
     async fn validate_and_publish(&self, uri: Url, text: &str) {
+        self.maybe_reload().await;
         let Some(state) = self.state.read().await.clone() else {
             return;
         };
@@ -197,32 +237,18 @@ fn compute_diagnostics(text: &str, file_ext: &str, state: &LoadedState) -> Vec<D
 
     match file_ext {
         "sql" => {
-            // Treat the whole buffer as a single SQL query.
-            match sqlshield::validate_query_with_dialect(text, "", state.dialect) {
-                Ok(errors) => {
-                    // Column info isn't threaded through; point at line 0.
-                    for description in errors {
-                        diagnostics.push(make_diagnostic(0, 0, 0, 0, description));
-                    }
-                    // For .sql files we also need schema-aware validation. The
-                    // call above loaded a fresh empty schema from "" — do a
-                    // second pass using the server's cached schema.
-                    if !state.schema.is_empty() {
-                        diagnostics.clear();
-                        let dialect = state.dialect.as_sqlparser();
-                        match sqlparser::parser::Parser::parse_sql(dialect.as_ref(), text) {
-                            Ok(statements) => {
-                                for desc in validation::validate_statements_with_schema(
-                                    &statements,
-                                    &state.schema,
-                                ) {
-                                    diagnostics.push(make_diagnostic(0, 0, 0, 0, desc));
-                                }
-                            }
-                            Err(err) => {
-                                diagnostics.push(make_diagnostic(0, 0, 0, 0, err.to_string()));
-                            }
-                        }
+            // Treat the whole buffer as a single SQL query, validated directly
+            // against the server's cached schema. Column info isn't threaded
+            // through, so every diagnostic points at line 0.
+            let dialect = state.dialect.as_sqlparser();
+            match sqlparser::parser::Parser::parse_sql(dialect.as_ref(), text) {
+                Ok(statements) => {
+                    for desc in validation::validate_statements_with_schema(
+                        &statements,
+                        &state.schema,
+                        state.dialect,
+                    ) {
+                        diagnostics.push(make_diagnostic(0, 0, 0, 0, desc));
                     }
                 }
                 Err(err) => {
@@ -238,7 +264,11 @@ fn compute_diagnostics(text: &str, file_ext: &str, state: &LoadedState) -> Vec<D
                 dialect.as_ref(),
             ) {
                 Ok(queries) => {
-                    let errors = validation::validate_queries_in_code(&queries, &state.schema);
+                    let errors = validation::validate_queries_in_code(
+                        &queries,
+                        &state.schema,
+                        state.dialect,
+                    );
                     for err in errors {
                         // err.line is 1-based; LSP is 0-based.
                         let line = err.line.saturating_sub(1) as u32;
@@ -254,6 +284,10 @@ fn compute_diagnostics(text: &str, file_ext: &str, state: &LoadedState) -> Vec<D
     }
 
     diagnostics
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
 fn make_diagnostic(
@@ -300,6 +334,7 @@ mod tests {
             schema,
             dialect: Dialect::Generic,
             schema_source: None,
+            schema_mtime: None,
         }
     }
 

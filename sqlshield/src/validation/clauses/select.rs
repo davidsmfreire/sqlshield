@@ -1,42 +1,48 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, GroupByExpr, JoinConstraint, JoinOperator, Select,
+    Expr, FunctionArg, FunctionArgExpr, GroupByExpr, Ident, JoinConstraint, JoinOperator, Select,
     SelectItem, TableFactor, TableWithJoins,
 };
 
-use crate::schema::sql::lc;
-use crate::{schema, validation::asserts};
-
-use super::ClauseValidation;
+use crate::dialect::Dialect;
+use crate::schema::sql::{fold_ident, fold_str};
+use crate::validation::{asserts, Extras};
+use crate::{schema, validation::ClauseValidation};
 
 /// A table (or CTE-derived relation) visible to the current Select scope.
 pub(crate) struct VisibleRelation<'a> {
     /// Last segment of the table name (`users` in `public.users`).
-    name: &'a str,
+    name: &'a Ident,
     /// Alias if one was given (`u` in `users u`).
-    alias: Option<&'a str>,
+    alias: Option<&'a Ident>,
 }
 
 impl<'a> VisibleRelation<'a> {
-    /// The name the caller should use when referring to this relation with
+    /// The Ident the caller should use when referring to this relation with
     /// a qualifier (the alias if present, otherwise the name).
-    fn qualifier(&self) -> &'a str {
+    fn qualifier(&self) -> &'a Ident {
         self.alias.unwrap_or(self.name)
+    }
+
+    /// Display string of the table name (without alias). Used for error
+    /// messages — preserves the user's casing.
+    pub(crate) fn name_display(&self) -> &'a str {
+        self.name.value.as_str()
     }
 
     fn from_factor(factor: &'a TableFactor) -> Option<Self> {
         match factor {
             TableFactor::Table { name, alias, .. } => Some(Self {
-                name: name.0.last()?.value.as_str(),
-                alias: alias.as_ref().map(|a| a.name.value.as_str()),
+                name: name.0.last()?,
+                alias: alias.as_ref().map(|a| &a.name),
             }),
             // A derived table `(SELECT …) alias` — its alias doubles as the
             // relation name. Its projected columns are tracked in `extras`.
             TableFactor::Derived { alias, .. } => {
                 let alias_ref = alias.as_ref()?;
                 Some(Self {
-                    name: alias_ref.name.value.as_str(),
+                    name: &alias_ref.name,
                     alias: None,
                 })
             }
@@ -49,13 +55,31 @@ pub(crate) fn validate_exprs_in_select_scope(
     exprs: &[&Expr],
     select: &Select,
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
 ) -> Vec<String> {
+    // Make derived tables in the FROM clause visible to expressions
+    // evaluated outside the regular Select::validate pass (ORDER BY).
+    let mut local_extras = extras.clone();
+    for tw in &select.from {
+        crate::validation::publish_derived(&tw.relation, schema, dialect, &mut local_extras);
+        for join in &tw.joins {
+            crate::validation::publish_derived(&join.relation, schema, dialect, &mut local_extras);
+        }
+    }
     let visible = collect_visible_relations(&select.from);
     let aliases = collect_projection_aliases(select);
     let mut errors = Vec::new();
     for expr in exprs {
-        validate_expr_column_refs(expr, &visible, schema, extras, &aliases, &mut errors);
+        validate_expr_column_refs(
+            expr,
+            &visible,
+            schema,
+            dialect,
+            &local_extras,
+            &aliases,
+            &mut errors,
+        );
     }
     errors
 }
@@ -80,31 +104,51 @@ fn validate_from_factor(
     factor: &TableFactor,
     visible: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
     errors: &mut Vec<String>,
 ) {
-    if let Some(name) = asserts::is_relation_in_schema(factor, schema, extras) {
+    if let Some(name) = asserts::is_relation_in_schema(factor, schema, dialect, extras) {
         errors.push(format!("Table `{name}` not found in schema nor subqueries"));
     }
     if let TableFactor::NestedJoin {
         table_with_joins, ..
     } = factor
     {
-        validate_from_factor(&table_with_joins.relation, visible, schema, extras, errors);
+        validate_from_factor(
+            &table_with_joins.relation,
+            visible,
+            schema,
+            dialect,
+            extras,
+            errors,
+        );
         for join in &table_with_joins.joins {
-            validate_from_factor(&join.relation, visible, schema, extras, errors);
-            validate_join_op(&join.join_operator, visible, schema, extras, errors);
+            validate_from_factor(&join.relation, visible, schema, dialect, extras, errors);
+            validate_join_op(
+                &join.join_operator,
+                &join.relation,
+                visible,
+                schema,
+                dialect,
+                extras,
+                errors,
+            );
         }
     }
 }
 
-/// Validate a join's ON / USING constraint columns against the outer
-/// visible relations.
+/// Validate a join's ON / USING / NATURAL constraint columns against the
+/// outer visible relations. `right` is the right-hand `TableFactor` of the
+/// join; needed to identify which side is "new" so NATURAL JOIN can compare
+/// its column set against the accumulated left-hand side.
 fn validate_join_op(
     op: &JoinOperator,
+    right: &TableFactor,
     visible: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
     errors: &mut Vec<String>,
 ) {
     let Some(constraint) = join_constraint(op) else {
@@ -113,18 +157,117 @@ fn validate_join_op(
     let no_aliases: HashSet<&str> = HashSet::new();
     match constraint {
         JoinConstraint::On(expr) => {
-            validate_expr_column_refs(expr, visible, schema, extras, &no_aliases, errors);
+            validate_expr_column_refs(expr, visible, schema, dialect, extras, &no_aliases, errors);
         }
         JoinConstraint::Using(cols) => {
             for col in cols {
-                if let Some(err) = resolve_unqualified(col.value.as_str(), visible, schema, extras)
+                if let Some(err) =
+                    resolve_unqualified_for_using(col, visible, schema, dialect, extras)
                 {
                     errors.push(err);
                 }
             }
         }
-        JoinConstraint::Natural | JoinConstraint::None => {}
+        JoinConstraint::Natural => {
+            if let Some(err) = validate_natural_join(right, visible, schema, dialect, extras) {
+                errors.push(err);
+            }
+        }
+        JoinConstraint::None => {}
     }
+}
+
+/// Resolve the column set of a `TableFactor` against the schema or CTE/
+/// derived-table extras. Returns `None` if the factor isn't statically known
+/// (subquery without alias, table function, etc.) — caller should silently
+/// skip those.
+fn factor_cols(
+    factor: &TableFactor,
+    schema: &schema::TablesAndColumns,
+    dialect: Dialect,
+    extras: &Extras,
+) -> Option<HashSet<String>> {
+    match factor {
+        TableFactor::Table { name, .. } => {
+            let key = if name.0.len() > 1 {
+                crate::schema::sql::qualified_key(name, dialect)
+            } else {
+                fold_ident(name.0.last()?, dialect)
+            };
+            schema
+                .get(&key)
+                .cloned()
+                .or_else(|| extras.get(&key).cloned())
+        }
+        TableFactor::Derived { alias, .. } => {
+            let alias = alias.as_ref()?;
+            let key = fold_ident(&alias.name, dialect);
+            extras.get(&key).cloned()
+        }
+        _ => None,
+    }
+}
+
+/// NATURAL JOIN: implicit equi-join on every column whose name appears in
+/// both sides. Flag a query that uses NATURAL JOIN with no shared columns —
+/// most engines silently degrade to a Cartesian product, which is almost
+/// certainly not what the author meant.
+fn validate_natural_join(
+    right: &TableFactor,
+    visible: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    dialect: Dialect,
+    extras: &Extras,
+) -> Option<String> {
+    let right_cols = factor_cols(right, schema, dialect, extras)?;
+    let right_qualifier_key = match right {
+        TableFactor::Table { name, alias, .. } => {
+            if let Some(a) = alias {
+                fold_ident(&a.name, dialect)
+            } else {
+                fold_ident(name.0.last()?, dialect)
+            }
+        }
+        TableFactor::Derived { alias, .. } => fold_ident(&alias.as_ref()?.name, dialect),
+        _ => return None,
+    };
+
+    // Union of every other visible relation's columns. Skip relations whose
+    // own column set we can't resolve — we don't want to false-positive when
+    // schema is incomplete.
+    let mut left_cols: HashSet<String> = HashSet::new();
+    for rel in visible {
+        if fold_ident(rel.qualifier(), dialect) == right_qualifier_key {
+            continue;
+        }
+        let key = fold_ident(rel.name, dialect);
+        let cols = schema.get(&key).or_else(|| extras.get(&key));
+        if let Some(cols) = cols {
+            left_cols.extend(cols.iter().cloned());
+        }
+    }
+    if left_cols.is_empty() {
+        return None;
+    }
+    if right_cols.is_disjoint(&left_cols) {
+        let display = match right {
+            TableFactor::Table { name, .. } => name
+                .0
+                .iter()
+                .map(|p| p.value.as_str())
+                .collect::<Vec<_>>()
+                .join("."),
+            TableFactor::Derived { alias, .. } => alias
+                .as_ref()
+                .map(|a| a.name.value.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        return Some(format!(
+            "NATURAL JOIN of `{display}` shares no column with the left-hand relations"
+        ));
+    }
+    None
 }
 
 /// Borrow the `JoinConstraint` out of any `JoinOperator` that carries one.
@@ -178,20 +321,21 @@ fn collect_from_factor<'a>(factor: &'a TableFactor, out: &mut Vec<VisibleRelatio
 /// the real schema or CTE-derived extras). Returns `Some(true)` if yes,
 /// `Some(false)` if the relation is known but the column isn't, and `None`
 /// if the relation is entirely unknown (caller should not over-report).
-/// All identifier comparisons are ASCII case-insensitive.
+/// All identifier comparisons honor the dialect's folding rules.
 fn column_in_relation(
-    col: &str,
+    col: &Ident,
     rel: &VisibleRelation<'_>,
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
 ) -> Option<bool> {
-    let rel_name_lc = lc(rel.name);
-    let col_lc = lc(col);
-    if let Some(cols) = schema.get(&rel_name_lc) {
-        return Some(cols.contains(&col_lc));
+    let rel_key = fold_ident(rel.name, dialect);
+    let col_key = fold_ident(col, dialect);
+    if let Some(cols) = schema.get(&rel_key) {
+        return Some(cols.contains(&col_key));
     }
-    if let Some(cols) = asserts::extras_get(extras, rel.name) {
-        return Some(asserts::set_contains_ci(cols, col));
+    if let Some(cols) = asserts::extras_get(extras, &rel_key) {
+        return Some(cols.contains(&col_key));
     }
     None
 }
@@ -200,27 +344,68 @@ fn column_in_relation(
 /// The error message names the specific table(s) the column was missing
 /// from when at least one visible relation is known to the schema; if no
 /// known relation contains this column, table-not-found errors emitted by
-/// the FROM walk already covered the situation, so we stay quiet.
+/// the FROM walk already covered the situation, so we stay quiet. Columns
+/// found in two or more visible relations are reported as ambiguous.
 fn resolve_unqualified(
-    col: &str,
+    col: &Ident,
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
 ) -> Option<String> {
+    resolve_unqualified_inner(col, relations, schema, dialect, extras, true)
+}
+
+/// Variant used by `JOIN ... USING (cols)` where the column is *expected* to
+/// exist in two or more relations (that's the whole point of USING). Skips
+/// the ambiguity check but keeps the missing-everywhere check.
+fn resolve_unqualified_for_using(
+    col: &Ident,
+    relations: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    dialect: Dialect,
+    extras: &Extras,
+) -> Option<String> {
+    resolve_unqualified_inner(col, relations, schema, dialect, extras, false)
+}
+
+fn resolve_unqualified_inner(
+    col: &Ident,
+    relations: &[VisibleRelation<'_>],
+    schema: &schema::TablesAndColumns,
+    dialect: Dialect,
+    extras: &Extras,
+    flag_ambiguity: bool,
+) -> Option<String> {
+    let mut found_in: Vec<&str> = Vec::new();
     let mut not_found_in: Vec<&str> = Vec::new();
     for rel in relations {
-        match column_in_relation(col, rel, schema, extras) {
-            Some(true) => return None,
-            Some(false) => not_found_in.push(rel.name),
+        match column_in_relation(col, rel, schema, dialect, extras) {
+            Some(true) => found_in.push(rel.name_display()),
+            Some(false) => not_found_in.push(rel.name_display()),
             None => {}
         }
     }
+    if flag_ambiguity && found_in.len() >= 2 {
+        let names = found_in.join(",");
+        return Some(format!(
+            "Column `{}` is ambiguous; appears in: {names}",
+            col.value
+        ));
+    }
+    if !found_in.is_empty() {
+        return None;
+    }
     if let [table] = not_found_in.as_slice() {
-        Some(format!("Column `{col}` not found in table `{table}`"))
+        Some(format!(
+            "Column `{}` not found in table `{table}`",
+            col.value
+        ))
     } else if !not_found_in.is_empty() {
         let names = not_found_in.join(",");
         Some(format!(
-            "Column `{col}` not found in none of the tables: {names}"
+            "Column `{}` not found in none of the tables: {names}",
+            col.value
         ))
     } else {
         None
@@ -228,19 +413,22 @@ fn resolve_unqualified(
 }
 
 fn resolve_qualified(
-    qualifier: &str,
-    col: &str,
+    qualifier: &Ident,
+    col: &Ident,
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
 ) -> Option<String> {
+    let qualifier_key = fold_ident(qualifier, dialect);
     let matched = relations
         .iter()
-        .find(|r| r.qualifier().eq_ignore_ascii_case(qualifier))?;
-    match column_in_relation(col, matched, schema, extras) {
+        .find(|r| fold_ident(r.qualifier(), dialect) == qualifier_key)?;
+    match column_in_relation(col, matched, schema, dialect, extras) {
         Some(false) => Some(format!(
-            "Column `{col}` not found in table `{}`",
-            matched.name
+            "Column `{}` not found in table `{}`",
+            col.value,
+            matched.name_display()
         )),
         _ => None,
     }
@@ -250,11 +438,12 @@ pub(crate) fn validate_expr_column_refs(
     root: &Expr,
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
     aliases: &HashSet<&str>,
     errors: &mut Vec<String>,
 ) {
-    walk_expr(root, relations, schema, extras, aliases, errors);
+    walk_expr(root, relations, schema, dialect, extras, aliases, errors);
 }
 
 /// Manual recursion over `Expr`. Unlike `sqlparser::ast::visit_expressions`,
@@ -265,30 +454,48 @@ fn walk_expr(
     expr: &Expr,
     relations: &[VisibleRelation<'_>],
     schema: &schema::TablesAndColumns,
-    extras: &HashMap<&str, HashSet<&str>>,
+    dialect: Dialect,
+    extras: &Extras,
     aliases: &HashSet<&str>,
     errors: &mut Vec<String>,
 ) {
     match expr {
         Expr::Identifier(ident) => {
-            let col = ident.value.as_str();
-            if aliases.contains(col) {
+            // Projection aliases are matched against the original casing
+            // currently surfaced by sqlparser; mirror that here.
+            if aliases.contains(ident.value.as_str()) {
                 return;
             }
-            if let Some(err) = resolve_unqualified(col, relations, schema, extras) {
+            // Also accept aliases under dialect-aware folding so quoted
+            // aliases compare correctly in PG mode.
+            let folded = fold_str(ident.value.as_str(), dialect);
+            if aliases.iter().any(|a| fold_str(a, dialect) == folded) {
+                return;
+            }
+            if let Some(err) = resolve_unqualified(ident, relations, schema, dialect, extras) {
                 errors.push(err);
             }
         }
         Expr::CompoundIdentifier(idents) if idents.len() == 2 => {
-            let qualifier = idents[0].value.as_str();
-            let col = idents[1].value.as_str();
-            if let Some(err) = resolve_qualified(qualifier, col, relations, schema, extras) {
+            if let Some(err) =
+                resolve_qualified(&idents[0], &idents[1], relations, schema, dialect, extras)
+            {
+                errors.push(err);
+            }
+        }
+        // `schema.table.col`: the table-qualifier is `idents[1]`. Match against
+        // visible relations the same way as a 2-part reference; the FROM walk
+        // already validated whether `schema.table` resolves at all.
+        Expr::CompoundIdentifier(idents) if idents.len() == 3 => {
+            if let Some(err) =
+                resolve_qualified(&idents[1], &idents[2], relations, schema, dialect, extras)
+            {
                 errors.push(err);
             }
         }
         Expr::BinaryOp { left, right, .. } => {
-            walk_expr(left, relations, schema, extras, aliases, errors);
-            walk_expr(right, relations, schema, extras, aliases, errors);
+            walk_expr(left, relations, schema, dialect, extras, aliases, errors);
+            walk_expr(right, relations, schema, dialect, extras, aliases, errors);
         }
         Expr::UnaryOp { expr, .. }
         | Expr::Nested(expr)
@@ -304,27 +511,27 @@ fn walk_expr(
         | Expr::TryCast { expr, .. }
         | Expr::SafeCast { expr, .. }
         | Expr::Collate { expr, .. } => {
-            walk_expr(expr, relations, schema, extras, aliases, errors);
+            walk_expr(expr, relations, schema, dialect, extras, aliases, errors);
         }
         Expr::Between {
             expr, low, high, ..
         } => {
-            walk_expr(expr, relations, schema, extras, aliases, errors);
-            walk_expr(low, relations, schema, extras, aliases, errors);
-            walk_expr(high, relations, schema, extras, aliases, errors);
+            walk_expr(expr, relations, schema, dialect, extras, aliases, errors);
+            walk_expr(low, relations, schema, dialect, extras, aliases, errors);
+            walk_expr(high, relations, schema, dialect, extras, aliases, errors);
         }
         Expr::InList { expr, list, .. } => {
-            walk_expr(expr, relations, schema, extras, aliases, errors);
+            walk_expr(expr, relations, schema, dialect, extras, aliases, errors);
             for item in list {
-                walk_expr(item, relations, schema, extras, aliases, errors);
+                walk_expr(item, relations, schema, dialect, extras, aliases, errors);
             }
         }
         Expr::Like { expr, pattern, .. }
         | Expr::ILike { expr, pattern, .. }
         | Expr::SimilarTo { expr, pattern, .. }
         | Expr::RLike { expr, pattern, .. } => {
-            walk_expr(expr, relations, schema, extras, aliases, errors);
-            walk_expr(pattern, relations, schema, extras, aliases, errors);
+            walk_expr(expr, relations, schema, dialect, extras, aliases, errors);
+            walk_expr(pattern, relations, schema, dialect, extras, aliases, errors);
         }
         Expr::Case {
             operand,
@@ -333,16 +540,16 @@ fn walk_expr(
             else_result,
         } => {
             if let Some(op) = operand {
-                walk_expr(op, relations, schema, extras, aliases, errors);
+                walk_expr(op, relations, schema, dialect, extras, aliases, errors);
             }
             for c in conditions {
-                walk_expr(c, relations, schema, extras, aliases, errors);
+                walk_expr(c, relations, schema, dialect, extras, aliases, errors);
             }
             for r in results {
-                walk_expr(r, relations, schema, extras, aliases, errors);
+                walk_expr(r, relations, schema, dialect, extras, aliases, errors);
             }
             if let Some(e) = else_result {
-                walk_expr(e, relations, schema, extras, aliases, errors);
+                walk_expr(e, relations, schema, dialect, extras, aliases, errors);
             }
         }
         Expr::Function(f) => {
@@ -353,15 +560,15 @@ fn walk_expr(
                         ..
                     }
                     | FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
-                        walk_expr(e, relations, schema, extras, aliases, errors);
+                        walk_expr(e, relations, schema, dialect, extras, aliases, errors);
                     }
                     _ => {}
                 }
             }
         }
         Expr::AnyOp { left, right, .. } | Expr::AllOp { left, right, .. } => {
-            walk_expr(left, relations, schema, extras, aliases, errors);
-            walk_expr(right, relations, schema, extras, aliases, errors);
+            walk_expr(left, relations, schema, dialect, extras, aliases, errors);
+            walk_expr(right, relations, schema, dialect, extras, aliases, errors);
         }
         // Subquery boundaries: hand off to the query validator with a fresh
         // scope. The enclosing `extras` (CTEs, derived tables visible at this
@@ -370,6 +577,7 @@ fn walk_expr(
             errors.extend(crate::validation::validate_query_with_scope(
                 q.as_ref(),
                 schema,
+                dialect,
                 extras,
             ));
         }
@@ -377,14 +585,16 @@ fn walk_expr(
             errors.extend(crate::validation::validate_query_with_scope(
                 subquery.as_ref(),
                 schema,
+                dialect,
                 extras,
             ));
         }
         Expr::InSubquery { expr, subquery, .. } => {
-            walk_expr(expr, relations, schema, extras, aliases, errors);
+            walk_expr(expr, relations, schema, dialect, extras, aliases, errors);
             errors.extend(crate::validation::validate_query_with_scope(
                 subquery.as_ref(),
                 schema,
+                dialect,
                 extras,
             ));
         }
@@ -399,7 +609,8 @@ impl ClauseValidation for Select {
     fn validate(
         &self,
         schema: &schema::TablesAndColumns,
-        extras: &HashMap<&str, HashSet<&str>>,
+        dialect: Dialect,
+        extras: &Extras,
     ) -> Vec<String> {
         let select = self;
         let mut errors = vec![];
@@ -410,10 +621,32 @@ impl ClauseValidation for Select {
         let no_aliases: HashSet<&str> = HashSet::new();
 
         for item in &select.from {
-            validate_from_factor(&item.relation, &visible, schema, extras, &mut errors);
+            validate_from_factor(
+                &item.relation,
+                &visible,
+                schema,
+                dialect,
+                extras,
+                &mut errors,
+            );
             for join in &item.joins {
-                validate_from_factor(&join.relation, &visible, schema, extras, &mut errors);
-                validate_join_op(&join.join_operator, &visible, schema, extras, &mut errors);
+                validate_from_factor(
+                    &join.relation,
+                    &visible,
+                    schema,
+                    dialect,
+                    extras,
+                    &mut errors,
+                );
+                validate_join_op(
+                    &join.join_operator,
+                    &join.relation,
+                    &visible,
+                    schema,
+                    dialect,
+                    extras,
+                    &mut errors,
+                );
             }
         }
 
@@ -427,7 +660,15 @@ impl ClauseValidation for Select {
                 SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
                 _ => continue,
             };
-            validate_expr_column_refs(expr, &visible, schema, extras, &no_aliases, &mut errors);
+            validate_expr_column_refs(
+                expr,
+                &visible,
+                schema,
+                dialect,
+                extras,
+                &no_aliases,
+                &mut errors,
+            );
         }
 
         // WHERE / HAVING / GROUP BY column references. `visible` and
@@ -439,17 +680,34 @@ impl ClauseValidation for Select {
                 where_expr,
                 &visible,
                 schema,
+                dialect,
                 extras,
                 &no_aliases,
                 &mut errors,
             );
         }
         if let Some(having_expr) = &select.having {
-            validate_expr_column_refs(having_expr, &visible, schema, extras, &aliases, &mut errors);
+            validate_expr_column_refs(
+                having_expr,
+                &visible,
+                schema,
+                dialect,
+                extras,
+                &aliases,
+                &mut errors,
+            );
         }
         if let GroupByExpr::Expressions(exprs) = &select.group_by {
             for expr in exprs {
-                validate_expr_column_refs(expr, &visible, schema, extras, &aliases, &mut errors);
+                validate_expr_column_refs(
+                    expr,
+                    &visible,
+                    schema,
+                    dialect,
+                    extras,
+                    &aliases,
+                    &mut errors,
+                );
             }
         }
 

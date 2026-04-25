@@ -70,8 +70,12 @@ pub fn validate_query_with_dialect(
 ) -> Result<Vec<String>> {
     let parser_dialect = dialect.as_sqlparser();
     let statements = sqlparser::parser::Parser::parse_sql(parser_dialect.as_ref(), query)?;
-    let loaded_schema = schema::load_schema(schema.as_bytes(), "sql")?;
-    Ok(validate_statements_with_schema(&statements, &loaded_schema))
+    let loaded_schema = schema::load_schema(schema.as_bytes(), "sql", dialect)?;
+    Ok(validate_statements_with_schema(
+        &statements,
+        &loaded_schema,
+        dialect,
+    ))
 }
 
 /// Walk `dir`, extract SQL from each supported source file, and validate
@@ -87,10 +91,24 @@ pub fn validate_files_with_dialect(
     schema_file_path: &Path,
     dialect: Dialect,
 ) -> Result<Vec<SqlValidationError>> {
-    use rayon::prelude::*;
-
     let tables_and_columns: schema::TablesAndColumns =
-        schema::load_schema_from_file(schema_file_path)?;
+        schema::load_schema_from_file(schema_file_path, dialect)?;
+    Ok(validate_files_with_schema(
+        dir,
+        &tables_and_columns,
+        dialect,
+    ))
+}
+
+/// Variant for callers that already hold a [`schema::TablesAndColumns`] —
+/// e.g., live database introspection in the CLI. Skips the schema file
+/// load and goes straight to the parallel walker.
+pub fn validate_files_with_schema(
+    dir: &Path,
+    tables_and_columns: &schema::TablesAndColumns,
+    dialect: Dialect,
+) -> Vec<SqlValidationError> {
+    use rayon::prelude::*;
 
     // Collect file paths first so rayon can parallelize cleanly over them.
     // Filtering in one pass so the eventual parallel work is dominated by
@@ -120,7 +138,7 @@ pub fn validate_files_with_dialect(
             else {
                 return Vec::new();
             };
-            validate_queries_in_code(&queries, &tables_and_columns)
+            validate_queries_in_code(&queries, tables_and_columns, dialect)
                 .into_iter()
                 .map(|query_error| {
                     SqlValidationError::new(file_path, query_error.line, query_error.description)
@@ -129,5 +147,5 @@ pub fn validate_files_with_dialect(
         })
         .collect();
 
-    Ok(validation_errors)
+    validation_errors
 }

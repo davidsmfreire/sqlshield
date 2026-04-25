@@ -14,6 +14,7 @@ pub struct RawConfig {
     pub schema: Option<PathBuf>,
     pub directory: Option<PathBuf>,
     pub dialect: Option<String>,
+    pub db_url: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -21,6 +22,7 @@ pub struct Config {
     pub schema: Option<PathBuf>,
     pub directory: Option<PathBuf>,
     pub dialect: Option<Dialect>,
+    pub db_url: Option<String>,
 }
 
 /// Load `.sqlshield.toml` from `dir`. Returns an empty config (`Ok(None)`)
@@ -44,5 +46,6 @@ pub fn load_from(dir: &Path) -> Result<Option<Config>, String> {
         schema: raw.schema,
         directory: raw.directory,
         dialect,
+        db_url: raw.db_url,
     }))
 }

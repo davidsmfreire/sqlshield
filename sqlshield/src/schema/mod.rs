@@ -8,11 +8,12 @@ use std::{
     path::Path,
 };
 
+use crate::dialect::Dialect;
 use crate::error::{Result, SqlShieldError};
 
 pub type TablesAndColumns = HashMap<String, HashSet<String>>;
 
-pub fn load_schema_from_file(file_path: &Path) -> Result<TablesAndColumns> {
+pub fn load_schema_from_file(file_path: &Path, dialect: Dialect) -> Result<TablesAndColumns> {
     let file_extension = file_path
         .extension()
         .ok_or_else(|| SqlShieldError::MissingExtension(file_path.to_path_buf()))?
@@ -23,12 +24,12 @@ pub fn load_schema_from_file(file_path: &Path) -> Result<TablesAndColumns> {
         source,
     })?;
 
-    load_schema(&schema, &file_extension)
+    load_schema(&schema, &file_extension, dialect)
 }
 
-pub fn load_schema(schema: &[u8], schema_type: &str) -> Result<TablesAndColumns> {
+pub fn load_schema(schema: &[u8], schema_type: &str, dialect: Dialect) -> Result<TablesAndColumns> {
     match schema_type {
-        "sql" => sql::load_schema(schema),
+        "sql" => sql::load_schema(schema, dialect),
         other => Err(SqlShieldError::UnsupportedSchemaType(other.to_string())),
     }
 }

@@ -55,3 +55,30 @@ fn alias_qualifier_still_works_for_projection() {
         "got: {errs:?}"
     );
 }
+
+#[test]
+fn three_part_qualified_column_unknown_is_flagged() {
+    // `schema.table.col` form: the table-qualifier is the second segment.
+    // Validates against a schema-qualified CREATE TABLE so the FROM clause
+    // resolves; the projection uses the 3-part form.
+    let qualified_schema = "CREATE TABLE public.users (id INT, name VARCHAR(64));";
+    let errs = sqlshield::validate_query(
+        "SELECT public.users.bogus FROM public.users",
+        qualified_schema,
+    )
+    .expect("SQL/schema should parse");
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("`bogus`") && e.contains("`users`")),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn three_part_qualified_column_valid() {
+    let qualified_schema = "CREATE TABLE public.users (id INT, name VARCHAR(64));";
+    let errs =
+        sqlshield::validate_query("SELECT public.users.id FROM public.users", qualified_schema)
+            .expect("SQL/schema should parse");
+    assert!(errs.is_empty(), "got: {errs:?}");
+}
