@@ -14,7 +14,7 @@ description = "Tools to validate raw sql queries declared in variables of arbitr
 colored = "2.1.0"
 rayon = "1.10"
 regex = "1.10.3"
-sqlparser = { version = "0.43.1", features = ["visitor"] }
+sqlparser = { version = "0.61.0", features = ["visitor"] }
 thiserror = "1.0"
 tree-sitter = "0.20.10"
 tree-sitter-go = "0.20.0"
@@ -25,5 +25,5 @@ tree-sitter-typescript = "0.20.5"
 walkdir = "2.4.0"
 
 [dev-dependencies]
-sqlparser = "0.43.1"
+sqlparser = "0.61.0"
 tempfile = "3"
