@@ -3,3 +3,14 @@ changelog_update = true
 git_release_enable = true
 publish = true
 semver_check = false
+
+# sqlshield-py is a PyPI-only crate (`publish = false` in its Cargo.toml
+# blocks crates.io upload). We still want release-plz to bump its
+# version, push a git tag, and create a GitHub release — the tag push is
+# what triggers the maturin CI workflow that uploads wheels to PyPI.
+[[package]]
+name = "sqlshield-py"
+publish = false
+release = true
+git_tag_enable = true
+git_release_enable = true
