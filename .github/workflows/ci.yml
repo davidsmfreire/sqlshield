@@ -124,8 +124,9 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: macos-13
-            target: x86_64
+          # macos-13 (Intel) hosted runners are deprecated and queue
+          # indefinitely. Apple Silicon is the dominant Mac arch, so
+          # we ship only aarch64 wheels.
           - runner: macos-14
             target: aarch64
     steps:
