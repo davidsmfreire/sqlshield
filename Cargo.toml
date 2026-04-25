@@ -7,6 +7,15 @@ members = [
   "sqlshield-lsp",
   "sqlshield-py",
 ]
+# Root `sqlshield-precommit` package is a pre-commit shim; exclude from
+# default builds so it doesn't clobber sqlshield-cli's `sqlshield` bin.
+default-members = [
+  "sqlshield",
+  "sqlshield-cli",
+  "sqlshield-introspect",
+  "sqlshield-lsp",
+  "sqlshield-py",
+]
 
 [workspace.package]
 version = "0.0.2"
