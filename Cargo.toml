@@ -18,7 +18,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.0.2"
+version = "0.0.3"
 authors = ["David Freire <dev@davidfrei.re>"]
 edition = "2021"
 rust-version = "1.80"
@@ -26,8 +26,8 @@ license = "MIT"
 repository = "https://github.com/davidsmfreire/sqlshield"
 
 [workspace.dependencies]
-sqlshield = { version = "0.0.2", path = "sqlshield" }
-sqlshield-introspect = { version = "0.0.2", path = "sqlshield-introspect" }
+sqlshield = { version = "0.0.3", path = "sqlshield" }
+sqlshield-introspect = { version = "0.0.3", path = "sqlshield-introspect" }
 
 # Root package exists solely so `cargo install --path .` (used by
 # pre-commit's `language: rust`) succeeds against this workspace. Not
