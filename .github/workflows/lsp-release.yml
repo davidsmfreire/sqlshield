@@ -32,7 +32,7 @@ jobs:
           - { runner: windows-latest, rust: x86_64-pc-windows-msvc,      use_cross: false }
           - { runner: windows-latest, rust: aarch64-pc-windows-msvc,     use_cross: false }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
