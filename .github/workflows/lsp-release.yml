@@ -59,15 +59,19 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          mkdir -p dist
+          mkdir -p dist _stage
           target=${{ matrix.target.rust }}
+          # Stage in a dedicated directory: the repo root already
+          # contains a `sqlshield-lsp/` directory (workspace member),
+          # so a bare `cp` would copy *into* that directory and tar
+          # would archive the whole crate instead of just the binary.
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp target/$target/release/sqlshield-lsp.exe sqlshield-lsp.exe
-            7z a -tzip dist/sqlshield-lsp-$target.zip sqlshield-lsp.exe
+            cp target/$target/release/sqlshield-lsp.exe _stage/sqlshield-lsp.exe
+            7z a -tzip dist/sqlshield-lsp-$target.zip ./_stage/sqlshield-lsp.exe
           else
-            cp target/$target/release/sqlshield-lsp sqlshield-lsp
-            chmod +x sqlshield-lsp
-            tar -czf dist/sqlshield-lsp-$target.tar.gz sqlshield-lsp
+            cp target/$target/release/sqlshield-lsp _stage/sqlshield-lsp
+            chmod +x _stage/sqlshield-lsp
+            tar -C _stage -czf dist/sqlshield-lsp-$target.tar.gz sqlshield-lsp
           fi
 
       - uses: actions/upload-artifact@v4
